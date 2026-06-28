@@ -52,8 +52,12 @@ if tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -
     exit 1
 fi
 
-# Build the combined prompt
-COMBINED_PROMPT=$(mktemp)
+# Create log/run directory
+mkdir -p "$WORKSPACE/runs"
+LOG_FILE="$WORKSPACE/runs/worker_$(date +%Y%m%d_%H%M%S).log"
+
+# Build the combined prompt (persistent file — no temp file race with async tmux)
+COMBINED_PROMPT="$WORKSPACE/runs/combined_prompt.md"
 cat "$WORKER_PROMPT" > "$COMBINED_PROMPT"
 echo "" >> "$COMBINED_PROMPT"
 echo "---" >> "$COMBINED_PROMPT"
@@ -73,17 +77,15 @@ cat > "$WORKSPACE/status.json" << EOF
 }
 EOF
 
-# Create log directory
-mkdir -p "$WORKSPACE/runs"
-LOG_FILE="$WORKSPACE/runs/worker_$(date +%Y%m%d_%H%M%S).log"
-
-# Launch worker in tmux
-# Use --model opus-4-6 1M context, auto mode for unattended operation
+# Launch worker in tmux (interactive session, reads prompt from file)
+# No pipe to tee — pipe kills tty, making claude buffer all output.
+# Use tmux capture-pane for monitoring, tmux pipe-pane for logging.
+BOOT_PROMPT="Read the file runs/combined_prompt.md — it contains your full task instructions. Follow every step in that document. Begin now."
 tmux new-window -t "$TMUX_SESSION" -n "$WINDOW_NAME" \
-    "cd '$WORKSPACE' && claude -p \"\$(cat '$COMBINED_PROMPT')\" --model claude-opus-4-6[1m] --enable-auto-mode 2>&1 | tee '$LOG_FILE'; echo '=== Worker exited at \$(date) ==='; bash"
+    "cd '$WORKSPACE' && claude --model 'claude-opus-4-6[1m]' --permission-mode auto '$BOOT_PROMPT'; echo '=== Worker exited at \$(date) ==='; bash"
 
-# Cleanup
-rm -f "$COMBINED_PROMPT"
+# Start logging via tmux pipe-pane (captures output without breaking tty)
+tmux pipe-pane -t "$TMUX_SESSION:$WINDOW_NAME" -o "cat >> '$LOG_FILE'"
 
 echo "Started worker for $TASK_ID"
 echo "  Workspace: $WORKSPACE"
