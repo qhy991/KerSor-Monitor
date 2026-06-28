@@ -1,0 +1,92 @@
+# Task: {{TASK_ID}} -- {{TASK_NAME}}
+
+{{DESCRIPTION}}
+
+- **Stage**: {{STAGE}}
+- **Bottleneck**: {{BOTTLENECK}}
+
+## Reference signature
+
+```python
+{{RUN_SIGNATURE}}
+```
+
+### Inputs
+
+{{INPUTS_TABLE}}
+
+### Outputs
+
+{{OUTPUTS_TABLE}}
+
+## Directory layout
+
+```
+problem/            # READ-ONLY symlink to sol-execbench data -- DO NOT modify
+  definition.json   # Formal I/O spec, axis ranges, dtype info
+  reference.py      # Baseline implementation (your starting point)
+  workload.jsonl    # Test workloads used by the evaluator
+candidates/         # Your implementation attempts
+solution.py         # Symlink to the promoted candidate (best so far)
+docs/               # Analysis and planning documents
+outputs/            # Benchmark CSVs and trace JSONs
+profile/            # NCU profiling reports
+runs/               # Session logs
+```
+
+## Constraints
+
+1. **Never modify anything under `problem/`** -- it is a read-only symlink.
+2. Your solution must export a `run()` function with the **exact same signature** as `problem/reference.py`.
+3. All tensor dtypes and shapes must match the reference outputs exactly.
+4. You may use PyTorch, Triton, or custom CUDA extensions.
+
+## Workflow
+
+### 1. Write a candidate
+
+Create `candidates/candidate_NNN.py` (starting from 001). Each candidate must export the same `run()` function.
+
+### 2. Validate correctness
+
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name candidates/candidate_NNN.py -o outputs/traces --timeout 120
+```
+
+This runs the candidate against all workloads and checks output correctness. **All workloads must pass before benchmarking.**
+
+### 3. Benchmark performance
+
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name candidates/candidate_NNN.py -o outputs/traces --timeout 300 --iterations 50
+```
+
+### 4. Promote the best candidate
+
+```bash
+cp candidates/candidate_NNN.py solution.py
+```
+
+Then validate solution.py:
+
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name solution.py -o outputs/traces --timeout 120
+```
+
+### 5. Iterate
+
+Read benchmark traces in `outputs/traces/` to identify remaining bottlenecks. Use NCU profiling if needed:
+
+```bash
+gpu-run.sh ncu --set full -o profile/candidate_NNN <kernel-launch-command>
+```
+
+Then write the next candidate incorporating improvements.
+
+## Benchmark evaluation
+
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name solution.py -o outputs/traces --timeout 300 --iterations 50
+```
+
+The SOL score in the output measures your solution's throughput relative to hardware peak. Higher is better.

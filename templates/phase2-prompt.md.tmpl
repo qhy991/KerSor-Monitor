@@ -1,0 +1,115 @@
+# KDA Phase 2 (Iteration): {{TASK_ID}} -- {{PROBLEM_NAME}}
+
+You are starting a new Phase 2 iteration for task **{{TASK_ID}}**. A previous candidate has been promoted, but there is room for further optimization.
+
+## Problem
+
+- **Task**: {{TASK_ID}} -- {{PROBLEM_NAME}}
+- **Description**: {{DESCRIPTION}}
+- **Stage**: {{STAGE}}
+- **Bottleneck**: {{BOTTLENECK}}
+- **Workspace**: `{{WORKSPACE_PATH}}`
+- **Problem dir**: `{{PROBLEM_PATH}}` (READ-ONLY)
+
+### run() signature
+
+```python
+{{RUN_SIGNATURE}}
+```
+
+## Current Best
+
+- **Candidate**: `{{CURRENT_BEST_CANDIDATE}}`
+- **Speedup vs baseline**: {{CURRENT_SPEEDUP}}x
+
+## Previous Attempts
+
+{{PREVIOUS_ATTEMPTS}}
+
+## Phase 2 Steps
+
+### Step 1: Analyze previous results
+
+Read the benchmark CSVs and reports for all previous candidates in `outputs/` and `docs/`. Understand:
+- Where is time being spent? (kernel launch, compute, memory, synchronization)
+- Which workload sizes are already fast and which have room to improve?
+- What techniques were tried and what was their impact?
+- Are there precision or correctness issues with any approach?
+
+If you need more data, profile the current best candidate with `/ncu-report-skill`:
+
+```bash
+gpu-run.sh ncu --set full -o profile/{{CURRENT_BEST_CANDIDATE}} <kernel-launch-command>
+```
+
+### Step 2: Identify the next optimization opportunity
+
+Based on your analysis, determine the most promising remaining optimization. Consider:
+- Did previous candidates leave performance on the table in specific workload ranges?
+- Are there architecture-specific techniques not yet tried? Use `/KernelWiki` to check.
+- Can you combine the best parts of multiple previous candidates?
+- Is there a fundamentally different algorithmic approach?
+
+### Step 3: Write the iteration draft
+
+Create `docs/phaseN_draft.md` (where N is the iteration number) with:
+
+```markdown
+# Phase N Draft: {{TASK_ID}} -- {{PROBLEM_NAME}}
+
+## Current Standing
+[Current best candidate, its speedup, and where it falls short]
+
+## Analysis of Previous Attempts
+[What worked, what didn't, and why]
+
+## New Optimization Direction
+[What to try next, with evidence and expected impact]
+- Technique: [what]
+- Target improvement: [specific metric and workload sizes]
+- Risk: [what could go wrong]
+
+## Fallback
+[If the new direction fails, what is the backup plan?]
+```
+
+### Step 4: Generate plan and implement
+
+Generate the plan from your draft:
+
+```
+/humanize:gen-plan --discussion
+```
+
+Then implement via RLCR:
+
+```
+/humanize:start-rlcr-loop --yolo --skip-quiz
+```
+
+### Step 5: Evaluate and promote
+
+After RLCR completes:
+
+1. Validate correctness on all workloads:
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name candidates/candidate_NNN.py -o outputs/traces --timeout 120
+```
+
+2. Benchmark performance:
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name candidates/candidate_NNN.py -o outputs/traces --timeout 300 --iterations 50
+```
+
+3. Compare against current best (`{{CURRENT_BEST_CANDIDATE}}`):
+   - Must pass correctness on all workloads
+   - Must be faster than `{{CURRENT_BEST_CANDIDATE}}` on at least half the workloads without regressing the rest
+
+4. If better, promote:
+```bash
+cp candidates/candidate_NNN.py solution.py
+```
+
+5. Update `status.json` with new best candidate and speedup.
+
+6. If more improvement is possible, loop back to Phase 2 with a new draft.

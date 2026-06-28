@@ -1,0 +1,131 @@
+# KDA Phase 1: {{TASK_ID}} -- {{PROBLEM_NAME}}
+
+You are starting Phase 1 (Explore and Draft) for task **{{TASK_ID}}**.
+
+## Problem
+
+- **Task**: {{TASK_ID}} -- {{PROBLEM_NAME}}
+- **Description**: {{DESCRIPTION}}
+- **Stage**: {{STAGE}}
+- **Bottleneck**: {{BOTTLENECK}}
+- **Workspace**: `{{WORKSPACE_PATH}}`
+- **Problem dir**: `{{PROBLEM_PATH}}` (READ-ONLY)
+
+### run() signature
+
+```python
+{{RUN_SIGNATURE}}
+```
+
+## Phase 1 Steps
+
+### Step 1: Understand the problem
+
+Read these files thoroughly:
+- `problem/definition.json` -- formal I/O spec, axis ranges, dtype constraints
+- `problem/reference.py` -- the baseline implementation you must beat
+- `problem/workload.jsonl` -- the workloads used for evaluation (understand the shape ranges)
+
+Pay attention to:
+- Input/output shapes and dtypes
+- How the reference implementation works (what operations, what order)
+- The range of workload dimensions (batch sizes, sequence lengths, hidden dims, etc.)
+- Any numerical precision requirements (epsilon values, dtype conversions)
+
+### Step 2: Run the baseline
+
+Validate and benchmark the reference implementation to establish your target:
+
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name problem/reference.py -o outputs/traces --timeout 120
+```
+
+Then benchmark with timing:
+
+```bash
+gpu-run.sh uv run --project /mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench scripts/run_dataset.py problem/ --solution-name problem/reference.py -o outputs/traces --timeout 300 --iterations 50
+```
+
+Record the baseline SOL scores and latencies from the output. Save a summary to `outputs/baseline_summary.txt`.
+
+### Step 3: Research optimization techniques
+
+Based on the bottleneck type (**{{BOTTLENECK}}**), research relevant optimization strategies:
+
+**If Memory-bound:**
+- Vectorized loads (float4/int4) to maximize memory bandwidth utilization
+- Kernel fusion to reduce memory round-trips
+- Minimize intermediate allocations and memory traffic
+- Coalesced memory access patterns
+- Shared memory usage for data reuse
+- Consider whether the kernel is launch-overhead-dominated for small workloads
+
+**If Compute-bound:**
+- Triton or CUDA kernel with optimized tile sizes
+- Tensor core utilization (WMMA/MMA instructions)
+- Warp-level primitives and shuffle operations
+- Optimal thread block configuration
+- Instruction-level parallelism and register pressure management
+- Pipeline overlapping of compute and memory
+
+**If Mixed:**
+- Apply both memory and compute optimizations
+- Profile to determine which bottleneck dominates at each workload size
+- Consider different strategies for different workload ranges
+
+Use `/KernelWiki` to look up architecture-specific techniques relevant to this operator. For example:
+- For attention operators: FlashAttention techniques, warp specialization
+- For normalization: vectorized reductions, online algorithms
+- For GEMM: tile sizes, tensor core layouts, split-K
+- For element-wise: vectorized loads, grid-stride loops
+
+### Step 4: Write the exploration draft
+
+Create `docs/draft.md` with the following structure:
+
+```markdown
+# Phase 1 Draft: {{TASK_ID}} -- {{PROBLEM_NAME}}
+
+## Problem Summary
+[Brief description of the operator, its role, and key workload characteristics]
+
+## Baseline Analysis
+[Baseline SOL scores, latencies, and initial observations from profiling]
+
+## Primary Optimization Direction
+[Your best optimization idea, with concrete evidence for why it should work]
+- Technique: [what]
+- Expected impact: [why, with numbers if possible]
+- Risk: [what could go wrong]
+
+## Alternative Direction 1
+[Second-best idea]
+- Technique / Expected impact / Risk
+
+## Alternative Direction 2
+[Third idea, possibly more speculative]
+- Technique / Expected impact / Risk
+
+## Risk Analysis
+[What are the main risks across all directions? Correctness pitfalls?
+ Precision issues? Performance cliffs at certain workload sizes?]
+
+## Synthesis
+[Which direction to try first and why. What to fall back to if it fails.]
+```
+
+### Step 5: Proceed to Phase 2
+
+After completing the draft, generate the implementation plan:
+
+```
+/humanize:gen-plan --discussion
+```
+
+Then start the RLCR loop:
+
+```
+/humanize:start-rlcr-loop --yolo --skip-quiz
+```
+
+Implement `candidates/candidate_001.py`, validate correctness, benchmark, and promote if it beats the baseline.

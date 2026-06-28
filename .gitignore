@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+outputs/
+baseline-results/
+workspaces/*/outputs/
+workspaces/*/profile/
+workspaces/*/runs/
+workspaces/*/candidates/
+workspaces/*/.git/
+orchestrator/logs/
+orchestrator/state.json
+*.log
