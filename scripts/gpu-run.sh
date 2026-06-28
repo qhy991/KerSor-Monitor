@@ -11,6 +11,9 @@ set -euo pipefail
 LOCK_FILE=/var/lock/gpu.lock
 GPU_ID=${GPU_ID:-0}
 
+# FlashInfer safetensors workloads need this
+export FLASHINFER_TRACE_DIR=${FLASHINFER_TRACE_DIR:-/mnt/public/zhaotianlang/projects/kernel-agent/sol-execbench/data}
+
 (
   flock -x 200
 

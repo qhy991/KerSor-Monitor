@@ -37,8 +37,8 @@ SOL_EXECBENCH_PROJECT = Path("/mnt/public/zhaotianlang/projects/kernel-agent/sol
 RUN_DATASET_SCRIPT = SOL_EXECBENCH_PROJECT / "scripts" / "run_dataset.py"
 
 DEFAULT_ITERATIONS = 50
-DEFAULT_TIMEOUT = 180
-DEFAULT_MAX_WORKLOADS = 14
+DEFAULT_TIMEOUT = 1200
+DEFAULT_MAX_WORKLOADS = None
 
 
 # ---------------------------------------------------------------------------

@@ -78,8 +78,9 @@ mkdir -p "$WORKSPACE/runs"
 LOG_FILE="$WORKSPACE/runs/worker_$(date +%Y%m%d_%H%M%S).log"
 
 # Launch worker in tmux
+# Use --model opus-4-6 1M context, auto mode for unattended operation
 tmux new-window -t "$TMUX_SESSION" -n "$WINDOW_NAME" \
-    "cd '$WORKSPACE' && claude -p \"\$(cat '$COMBINED_PROMPT')\" --dangerously-skip-permissions 2>&1 | tee '$LOG_FILE'; echo '=== Worker exited at $(date) ==='; bash"
+    "cd '$WORKSPACE' && claude -p \"\$(cat '$COMBINED_PROMPT')\" --model claude-opus-4-6[1m] --enable-auto-mode 2>&1 | tee '$LOG_FILE'; echo '=== Worker exited at \$(date) ==='; bash"
 
 # Cleanup
 rm -f "$COMBINED_PROMPT"
