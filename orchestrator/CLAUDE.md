@@ -98,21 +98,28 @@ If active workers < 3 (or < 5 after first 10 complete):
 ## Starting a Worker
 
 ```bash
-# 1. Prepare
-WORKSPACE="$INFRA_DIR/workspaces/<name>"
-WINDOW_NAME="<short_name>"  # e.g. fi_002
-
-# 2. Create tmux window and launch claude
-tmux new-window -t kda -n "$WINDOW_NAME" \
-  "cd $WORKSPACE && claude -p \"$(cat $INFRA_DIR/templates/worker-prompt.md)
-
-$(cat docs/phase1-prompt.md)\" --dangerously-skip-permissions 2>&1 | tee runs/worker_$(date +%Y%m%d_%H%M%S).log; bash"
-
-# 3. Update status
-# Worker writes status.json itself, but update dashboard to "running"
+# Use the start-worker script
+bash $INFRA_DIR/scripts/start-worker.sh <TASK_ID>
+# e.g. bash $INFRA_DIR/scripts/start-worker.sh FI-002
 ```
 
-The trailing `; bash` keeps the tmux window alive after claude exits, so you can inspect logs.
+Or manually:
+
+```bash
+WORKSPACE="$INFRA_DIR/workspaces/<name>"
+WINDOW_NAME="<short_name>"  # e.g. fi_002
+LOG_FILE="$WORKSPACE/runs/worker_$(date +%Y%m%d_%H%M%S).log"
+
+# Interactive session with auto mode (no -p, no pipe to tee — both break tty)
+tmux new-window -t kda -n "$WINDOW_NAME" \
+  "cd $WORKSPACE && claude --model 'claude-opus-4-6[1m]' --permission-mode auto \
+  'Read the file runs/combined_prompt.md — it contains your full task instructions. Follow every step in that document. Begin now.'; bash"
+
+# Log via pipe-pane (preserves tty)
+tmux pipe-pane -t kda:$WINDOW_NAME -o "cat >> $LOG_FILE"
+```
+
+The trailing `; bash` keeps the tmux window alive after claude exits, so you can inspect output.
 
 ## Proxy Answer Strategy
 
