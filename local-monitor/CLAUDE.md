@@ -67,6 +67,8 @@ Each task is mapped to the existing Feishu row fields:
 - `Round`
 - `Candidates`
 - `Speedup`
+- `Latency`
+- `MFU`
 - `Updated`
 
 Missing workspaces become `no_workspace`. Missing status files inside an

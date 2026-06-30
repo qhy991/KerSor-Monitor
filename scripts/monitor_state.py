@@ -37,8 +37,8 @@ DEFAULT_TELEMETRY_CONFIG = {
     "protocol": "http/json",
 }
 LEGACY_AUTOKAGGLE_KIND = "autokaggle_legacy"
-FEISHU_ROW_FIELDS = ("Task ID", "Status", "Round", "Candidates", "Speedup", "Updated")
-FEISHU_WRITABLE_FIELDS = ("Status", "Round", "Candidates", "Speedup", "Updated")
+FEISHU_ROW_FIELDS = ("Task ID", "Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated")
+FEISHU_WRITABLE_FIELDS = ("Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated")
 FEISHU_STATUS_OPTION_ORDER = (
     "no_workspace",
     "pending",
@@ -104,6 +104,8 @@ FEISHU_INIT_FIELD_DEFINITIONS = (
     {"type": "number", "name": "Round", "style": {"type": "plain", "precision": 0}},
     {"type": "number", "name": "Candidates", "style": {"type": "plain", "precision": 0}},
     {"type": "number", "name": "Speedup", "style": {"type": "plain", "precision": 4}},
+    {"type": "number", "name": "Latency", "style": {"type": "plain", "precision": 6}},
+    {"type": "number", "name": "MFU", "style": {"type": "plain", "precision": 4}},
     {"type": "datetime", "name": "Updated", "style": {"format": "yyyy-MM-dd HH:mm"}},
 )
 
@@ -507,6 +509,25 @@ def read_json(path):
         return {"data": None, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def read_jsonl(path):
+    rows = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except FileNotFoundError:
+        return {"data": [], "error": "missing"}
+    except Exception as exc:
+        return {"data": [], "error": f"{type(exc).__name__}: {exc}"}
+    for lineno, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            rows.append(json.loads(stripped))
+        except json.JSONDecodeError as exc:
+            return {"data": rows, "error": f"invalid_json:{lineno}: {exc}"}
+    return {"data": rows, "error": None}
+
+
 def read_text(path, limit=20000):
     try:
         text = path.read_text(errors="replace")
@@ -582,6 +603,8 @@ bindings, binding_errors = read_bindings(root / "monitor" / "state" / "bindings.
 tmux = run_command(["tmux", "list-panes", "-a", "-F", TMUX_PANE_FORMAT])
 dashboard = read_text(root / "monitor" / "dashboard.txt")
 status_md = read_text(root / "monitor" / "status.md")
+latency_summary = read_jsonl(root / "monitor" / "latency_summary.jsonl")
+results_export = read_jsonl(root / "monitor" / "results_export.jsonl")
 
 task_entries = []
 if isinstance(tasks_json["data"], dict):
@@ -596,6 +619,8 @@ payload = {
     "tmux_panes": tmux,
     "dashboard": dashboard,
     "status_md": status_md,
+    "latency_summary": latency_summary,
+    "results_export": results_export,
     "task_artifacts": {
         str(task.get("id", "")): {
             "candidates": count_candidates(task.get("task_dir") or root / "tasks" / task.get("name", "")),
@@ -858,6 +883,144 @@ def legacy_status(status: str, pane_live: bool) -> str:
     return "legacy_unknown"
 
 
+def parse_numeric_metric(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        if value[-1:] in {"x", "X", "%"}:
+            value = value[:-1].strip()
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def nested_metric_value(data: dict[str, Any], path: str) -> Any:
+    current: Any = data
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def first_numeric_metric(data: dict[str, Any], paths: tuple[str, ...]) -> float | None:
+    for path in paths:
+        value = parse_numeric_metric(nested_metric_value(data, path))
+        if value is not None:
+            return value
+    return None
+
+
+def legacy_summary_keys(row: dict[str, Any]) -> list[str]:
+    keys: list[str] = []
+    for field in ("task_id", "id", "task", "name"):
+        value = str(row.get(field) or "").strip()
+        if not value:
+            continue
+        keys.append(value.lower())
+        prefix = value.split("_", 1)[0]
+        if prefix and prefix != value:
+            keys.append(prefix.lower())
+    return keys
+
+
+def merge_missing_metrics(target: dict[str, float | None], source: dict[str, float | None]) -> None:
+    for key, value in source.items():
+        if target.get(key) is None and value is not None:
+            target[key] = value
+
+
+def build_legacy_performance_summaries(payload: dict[str, Any]) -> dict[str, dict[str, float | None]]:
+    summaries: dict[str, dict[str, float | None]] = {}
+
+    def update_summary(row: dict[str, Any], metrics: dict[str, float | None]) -> None:
+        keys = legacy_summary_keys(row)
+        if not keys:
+            return
+        primary = summaries.setdefault(keys[0], {"speedup": None, "latency": None, "mfu": None})
+        merge_missing_metrics(primary, metrics)
+        for key in keys[1:]:
+            summaries[key] = primary
+
+    latency_payload = payload.get("latency_summary") or {}
+    for row in latency_payload.get("data") or []:
+        if not isinstance(row, dict):
+            continue
+        update_summary(
+            row,
+            {
+                "speedup": first_numeric_metric(row, ("speedup_x", "speedup", "speedup.geomean", "speedup.mean", "speedup.sum")),
+                "latency": first_numeric_metric(row, ("best_ms", "best_latency_ms", "latency_ms", "best.mean_ms")),
+                "mfu": first_numeric_metric(
+                    row,
+                    (
+                        "mfu",
+                        "mfu_pct",
+                        "mfu_percent",
+                        "model_flops_utilization",
+                        "model_flops_utilization_pct",
+                    ),
+                ),
+            },
+        )
+
+    results_payload = payload.get("results_export") or {}
+    for row in results_payload.get("data") or []:
+        if not isinstance(row, dict):
+            continue
+        update_summary(
+            row,
+            {
+                "speedup": first_numeric_metric(
+                    row,
+                    ("speedup.geomean", "speedup.mean", "speedup.sum", "speedup.vs_pytorch_x", "speedup_x", "speedup"),
+                ),
+                "latency": first_numeric_metric(
+                    row,
+                    (
+                        "best.geomean_ms",
+                        "best.mean_ms",
+                        "best.mean_ms_regimes",
+                        "best.sum_ms",
+                        "best_ms",
+                        "latency_ms",
+                    ),
+                ),
+                "mfu": first_numeric_metric(
+                    row,
+                    (
+                        "mfu",
+                        "mfu_pct",
+                        "mfu_percent",
+                        "best.mfu",
+                        "best.mfu_pct",
+                        "best.model_flops_utilization",
+                        "model_flops_utilization",
+                        "model_flops_utilization_pct",
+                    ),
+                ),
+            },
+        )
+
+    return summaries
+
+
+def legacy_performance_for_task(
+    summaries: dict[str, dict[str, float | None]],
+    task_id: str,
+    task_name: str,
+) -> dict[str, float | None]:
+    for key in (task_id, task_name):
+        normalized = str(key or "").strip().lower()
+        if normalized in summaries:
+            return summaries[normalized]
+    return {"speedup": None, "latency": None, "mfu": None}
+
+
 def build_legacy_autokaggle_snapshot_from_payload(
     source: dict[str, Any],
     payload: dict[str, Any],
@@ -886,10 +1049,13 @@ def build_legacy_autokaggle_snapshot_from_payload(
 
     rows: list[dict[str, Any]] = []
     artifacts = payload.get("task_artifacts") or {}
+    performance_summaries = build_legacy_performance_summaries(payload)
     for task in task_entries:
         task_id = str(task.get("id", "")).strip()
         if not task_id:
             continue
+        task_name = task.get("name") or binding_by_id.get(task_id, {}).get("task_name", "")
+        performance = legacy_performance_for_task(performance_summaries, task_id, str(task_name))
         binding = binding_by_id.get(task_id, {})
         pane_id = binding.get("pane_id", "")
         pane = tmux_by_pane.get(pane_id, {})
@@ -905,7 +1071,9 @@ def build_legacy_autokaggle_snapshot_from_payload(
                 "status": legacy_status(str(binding.get("status", "")), pane_live),
                 "rounds": 0,
                 "candidates": int(artifact.get("candidates") or 0),
-                "speedup": None,
+                "speedup": performance.get("speedup"),
+                "latency": performance.get("latency"),
+                "mfu": performance.get("mfu"),
                 "updated": artifact.get("updated", ""),
                 "workspace": task_dir,
                 "status_error": None,
@@ -925,6 +1093,7 @@ def build_legacy_autokaggle_snapshot_from_payload(
                 "legacy": {
                     "binding": binding,
                     "pane_live": pane_live,
+                    "performance": performance,
                 },
             }
         )
@@ -1147,16 +1316,27 @@ def normalize_task_row(
     else:
         state = (status or {}).get("state", "pending")
 
+    status_data = status or {}
+    latency = status_data.get("latency_ms")
+    if latency is None:
+        latency = status_data.get("latency")
+    mfu = status_data.get("mfu")
+    if mfu is None:
+        mfu = status_data.get("mfu_pct")
+    if mfu is None:
+        mfu = status_data.get("model_flops_utilization")
     return {
         "id": task_id,
         "group": task.get("group", ""),
         "name": task.get("name", ""),
         "bottleneck": task.get("bottleneck", ""),
         "status": state,
-        "rounds": (status or {}).get("rounds", 0),
+        "rounds": status_data.get("rounds", 0),
         "candidates": candidates,
-        "speedup": (status or {}).get("speedup"),
-        "updated": (status or {}).get("timestamp", ""),
+        "speedup": status_data.get("speedup"),
+        "latency": latency,
+        "mfu": mfu,
+        "updated": status_data.get("timestamp", ""),
         "workspace": workspace,
         "status_error": status_error,
     }
@@ -1727,14 +1907,24 @@ def normalize_feishu_status(status: Any) -> str:
 
 
 def normalize_feishu_speedup(speedup: Any) -> float | None:
-    if speedup is None or speedup == "":
+    value = parse_numeric_metric(speedup)
+    if value is None:
         return None
-    if isinstance(speedup, str) and speedup.endswith("x"):
-        speedup = speedup[:-1]
-    try:
-        return round(float(speedup), 4)
-    except (TypeError, ValueError):
+    return round(value, 4)
+
+
+def normalize_feishu_number(value: Any, precision: int = 6) -> float | None:
+    parsed = parse_numeric_metric(value)
+    if parsed is None:
         return None
+    return round(parsed, precision)
+
+
+def format_metric_number(value: Any, precision: int = 6) -> str:
+    normalized = normalize_feishu_number(value, precision=precision)
+    if normalized is None:
+        return ""
+    return f"{normalized:g}"
 
 
 def normalize_feishu_datetime(value: Any) -> str:
@@ -1764,6 +1954,8 @@ def build_feishu_rows(snapshot: dict[str, Any], task_filter: str | None = None) 
                 "Round": task.get("rounds", 0),
                 "Candidates": task.get("candidates", 0),
                 "Speedup": normalize_feishu_speedup(task.get("speedup")),
+                "Latency": normalize_feishu_number(task.get("latency"), precision=6),
+                "MFU": normalize_feishu_number(task.get("mfu"), precision=4),
                 "Updated": normalize_feishu_datetime(task.get("updated") or now),
                 "_raw_status": task["status"],
             }
@@ -1826,6 +2018,9 @@ def merge_legacy_feishu_rows(
         if existing:
             existing_status = str(existing.get("_raw_status") or existing.get("Status") or "")
             if existing_status not in replaceable_primary_statuses:
+                for metric_name in ("Speedup", "Latency", "MFU"):
+                    if existing.get(metric_name) in (None, "") and row.get(metric_name) not in (None, ""):
+                        existing[metric_name] = row[metric_name]
                 continue
         else:
             merged_order.append(key)
@@ -2151,7 +2346,7 @@ def feishu_schema_diagnostics(rows: list[dict[str, Any]], field_payload: dict[st
     numeric_fields = {
         name
         for name, field in fields.items()
-        if field.get("type") == "number" and name in {"Round", "Candidates", "Speedup"}
+        if field.get("type") == "number" and name in {"Round", "Candidates", "Speedup", "Latency", "MFU"}
     }
     for row in rows[:20]:
         for name in numeric_fields:
@@ -2317,13 +2512,16 @@ def print_snapshot_table(snapshot: dict[str, Any]) -> None:
         for error in errors:
             print(f"  - {error}")
     print()
-    print(f"{'Task ID':<10} {'Status':<14} {'Round':>5} {'Cand':>5} {'Speedup':>8} Updated")
-    print("-" * 72)
+    print(f"{'Task ID':<10} {'Status':<14} {'Round':>5} {'Cand':>5} {'Speedup':>8} {'Latency':>10} {'MFU':>8} Updated")
+    print("-" * 94)
     for task in snapshot.get("tasks", []):
         print(
             f"{task['id']:<10} {task['status']:<14} "
             f"{str(task.get('rounds', 0)):>5} {str(task.get('candidates', 0)):>5} "
-            f"{format_speedup(task.get('speedup')):>8} {task.get('updated', '')}"
+            f"{format_speedup(task.get('speedup')):>8} "
+            f"{format_metric_number(task.get('latency')):>10} "
+            f"{format_metric_number(task.get('mfu'), precision=4):>8} "
+            f"{task.get('updated', '')}"
         )
 
 

@@ -19,6 +19,7 @@ from monitor_state import (  # noqa: E402
     build_local_monitor_message,
     build_local_snapshot,
     build_legacy_autokaggle_snapshot_from_payload,
+    build_legacy_performance_summaries,
     build_sonnet_monitor_prompt,
     build_feishu_preflight_commands,
     build_tmux_capture_command,
@@ -124,13 +125,24 @@ class MonitorStateTests(unittest.TestCase):
         workspace = root / "workspaces" / "fi_002_fused_add_rmsnorm_h4096"
         workspace.mkdir(parents=True)
         (workspace / "status.json").write_text(
-            json.dumps({"state": "promoted", "rounds": 2, "speedup": 1.234, "timestamp": "2026-06-29T00:00:00Z"})
+            json.dumps(
+                {
+                    "state": "promoted",
+                    "rounds": 2,
+                    "speedup": 1.234,
+                    "latency_ms": 0.010196,
+                    "mfu": 0.42,
+                    "timestamp": "2026-06-29T00:00:00Z",
+                }
+            )
         )
 
         rows = build_feishu_rows(build_local_snapshot(root), task_filter="FI-002")
 
         self.assertEqual(format_speedup(1.234), "1.23x")
         self.assertEqual(rows[0]["Speedup"], 1.234)
+        self.assertEqual(rows[0]["Latency"], 0.010196)
+        self.assertEqual(rows[0]["MFU"], 0.42)
         self.assertEqual(rows[0]["Status"], "promoted")
 
     def test_config_requires_remote_target(self) -> None:
@@ -184,6 +196,8 @@ class MonitorStateTests(unittest.TestCase):
                 "Round": 0,
                 "Candidates": 0,
                 "Speedup": "",
+                "Latency": "",
+                "MFU": "",
                 "Updated": "2026-06-30 00:00:00",
                 "_raw_status": "no_workspace",
             },
@@ -193,6 +207,8 @@ class MonitorStateTests(unittest.TestCase):
                 "Round": 1,
                 "Candidates": 2,
                 "Speedup": "",
+                "Latency": "",
+                "MFU": "",
                 "Updated": "2026-06-30 00:00:00",
                 "_raw_status": "running",
             },
@@ -203,7 +219,9 @@ class MonitorStateTests(unittest.TestCase):
                 "Status": "legacy_running",
                 "Round": 0,
                 "Candidates": 21,
-                "Speedup": "",
+                "Speedup": 1.018,
+                "Latency": 0.010196,
+                "MFU": 0.51,
                 "Updated": "2026-06-30 10:49:06",
                 "_raw_status": "legacy_running",
             },
@@ -212,7 +230,9 @@ class MonitorStateTests(unittest.TestCase):
                 "Status": "legacy_done",
                 "Round": 0,
                 "Candidates": 9,
-                "Speedup": "",
+                "Speedup": 1.5,
+                "Latency": 0.2,
+                "MFU": 0.6,
                 "Updated": "2026-06-30 10:49:06",
                 "_raw_status": "legacy_done",
             },
@@ -224,8 +244,12 @@ class MonitorStateTests(unittest.TestCase):
         by_id = {row["Task ID"]: row for row in merged}
         self.assertEqual(by_id["FI-002"]["Status"], "legacy_running")
         self.assertEqual(by_id["FI-002"]["Candidates"], 21)
+        self.assertEqual(by_id["FI-002"]["Speedup"], 1.018)
+        self.assertEqual(by_id["FI-002"]["Latency"], 0.010196)
+        self.assertEqual(by_id["FI-002"]["MFU"], 0.51)
         self.assertEqual(by_id["FI-002"]["_legacy_task_id"], "002")
         self.assertEqual(by_id["L1-003"]["Status"], "running")
+        self.assertEqual(by_id["L1-003"]["Latency"], 0.2)
         self.assertEqual(merge_legacy_feishu_rows(primary_rows, legacy_rows, task_filter="002")[0]["Task ID"], "FI-002")
 
     def test_feishu_target_must_be_explicit(self) -> None:
@@ -247,7 +271,7 @@ class MonitorStateTests(unittest.TestCase):
 
         field_payload = {"data": {"fields": [{"name": "Task ID", "type": "text"}]}}
         missing = missing_feishu_init_field_definitions(field_payload)
-        self.assertEqual([field["name"] for field in missing], ["Status", "Round", "Candidates", "Speedup", "Updated"])
+        self.assertEqual([field["name"] for field in missing], ["Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated"])
         status_field = next(field for field in missing if field["name"] == "Status")
         status_options = {option["name"] for option in status_field["options"]}
         self.assertIn("no_workspace", status_options)
@@ -299,6 +323,8 @@ class MonitorStateTests(unittest.TestCase):
                 "Round": 0,
                 "Candidates": 0,
                 "Speedup": None,
+                "Latency": 0.010196,
+                "MFU": None,
                 "Updated": "2026-06-29 12:00:00",
             }
         ]
@@ -306,11 +332,11 @@ class MonitorStateTests(unittest.TestCase):
         payload = json.loads(create_cmd[-1])
 
         self.assertEqual(create_cmd[:5], ["lark-cli", "--as", "user", "base", "+record-batch-create"])
-        self.assertEqual(payload["fields"], ["Task ID", "Status", "Round", "Candidates", "Speedup", "Updated"])
-        self.assertEqual(payload["rows"][0], ["L1-011", "running", 0, 0, None, "2026-06-29 12:00:00"])
+        self.assertEqual(payload["fields"], ["Task ID", "Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated"])
+        self.assertEqual(payload["rows"][0], ["L1-011", "running", 0, 0, None, 0.010196, None, "2026-06-29 12:00:00"])
 
     def test_feishu_command_uses_user_identity_and_expected_payload(self) -> None:
-        row = {"Task ID": "FI-002", "Status": "running", "Round": 1, "Candidates": 2, "Speedup": "", "Updated": "now"}
+        row = {"Task ID": "FI-002", "Status": "running", "Round": 1, "Candidates": 2, "Speedup": "", "Latency": 0.1, "MFU": 0.5, "Updated": "now"}
         cmd = build_feishu_update_command(row, base_token="base", table_id="table", record_id="rec_1")
 
         self.assertEqual(cmd[:5], ["lark-cli", "--as", "user", "base", "+record-upsert"])
@@ -318,10 +344,20 @@ class MonitorStateTests(unittest.TestCase):
         payload = json.loads(cmd[-1])
         self.assertNotIn("Task ID", payload)
         self.assertEqual(payload["Status"], "running")
+        self.assertEqual(payload["Latency"], 0.1)
 
     def test_feishu_preflight_commands_and_schema_warnings(self) -> None:
         rows = [
-            {"Task ID": "L1-003", "Status": "phase1_complete", "Round": 0, "Candidates": 0, "Speedup": "", "Updated": "now"}
+            {
+                "Task ID": "L1-003",
+                "Status": "phase1_complete",
+                "Round": 0,
+                "Candidates": 0,
+                "Speedup": "",
+                "Latency": "0.25",
+                "MFU": "0.75",
+                "Updated": "now",
+            }
         ]
         commands = build_feishu_preflight_commands(base_token="base", table_id="table")
         field_payload = {
@@ -332,6 +368,8 @@ class MonitorStateTests(unittest.TestCase):
                     {"name": "Round", "type": "number"},
                     {"name": "Candidates", "type": "number"},
                     {"name": "Speedup", "type": "number"},
+                    {"name": "Latency", "type": "number"},
+                    {"name": "MFU", "type": "number"},
                     {"name": "Updated", "type": "datetime"},
                 ]
             }
@@ -522,8 +560,23 @@ class MonitorStateTests(unittest.TestCase):
             },
             "dashboard": {"text": "dashboard tail", "error": None},
             "status_md": {"text": "status tail", "error": None},
+            "latency_summary": {
+                "data": [
+                    {
+                        "task": "023_rmsnorm_h1536",
+                        "best_ms": 0.004963,
+                        "speedup_x": 1.2345,
+                        "mfu": 0.33,
+                    }
+                ],
+                "error": None,
+            },
+            "results_export": {"data": [], "error": None},
             "task_artifacts": {"023": {"candidates": 2, "updated": "2026-06-29T00:01:00Z"}},
         }
+
+        summaries = build_legacy_performance_summaries(payload)
+        self.assertEqual(summaries["023"]["latency"], 0.004963)
 
         snapshot = build_legacy_autokaggle_snapshot_from_payload({"kind": "ssh"}, payload)
         task = snapshot["tasks"][0]
@@ -534,6 +587,9 @@ class MonitorStateTests(unittest.TestCase):
         self.assertTrue(task["control"]["read_only"])
         self.assertEqual(task["worker"]["pane_id"], "%23")
         self.assertEqual(task["candidates"], 2)
+        self.assertEqual(task["speedup"], 1.2345)
+        self.assertEqual(task["latency"], 0.004963)
+        self.assertEqual(task["mfu"], 0.33)
 
     def test_actuator_refuses_legacy_read_only_worker_even_when_active(self) -> None:
         config = {
