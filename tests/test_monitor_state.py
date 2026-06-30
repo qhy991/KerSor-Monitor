@@ -122,6 +122,49 @@ class MonitorStateTests(unittest.TestCase):
         self.assertEqual(task["workspace"], "L1-043__043_mla_fused_qkv_rope_split")
         self.assertEqual(rows[0]["Status"], "starting")
 
+    def test_v2_benchmark_csv_populates_candidates_and_scalar_metrics(self) -> None:
+        root = self.make_infra()
+        workspace = root / "workspaces" / "L1-043__043_mla_fused_qkv_rope_split"
+        workspace.mkdir(parents=True)
+        (workspace / "status.json").write_text(json.dumps({"state": "phase3", "timestamp": "2026-06-30T00:00:00Z"}))
+        (workspace / "benchmark.csv").write_text(
+            "\n".join(
+                [
+                    "timestamp,phase,iteration,candidate,workloads,correct,latency_ms,speedup,notes",
+                    "2026-06-30T00:00:00Z,phase1,1,baseline,16,16,0.010196,1.00x,baseline",
+                    "2026-06-30T00:10:00Z,phase2,1,candidate,16,16,0.008,1.42x vs v1,improved",
+                ]
+            )
+            + "\n"
+        )
+
+        rows = build_feishu_rows(build_local_snapshot(root), task_filter="L1-043")
+
+        self.assertEqual(rows[0]["Candidates"], 2)
+        self.assertEqual(rows[0]["Speedup"], 1.42)
+        self.assertEqual(rows[0][FEISHU_LATENCY_FIELD], 0.008)
+
+    def test_v2_benchmark_range_latency_is_not_written_as_scalar(self) -> None:
+        root = self.make_infra()
+        workspace = root / "workspaces" / "L1-043__043_mla_fused_qkv_rope_split"
+        workspace.mkdir(parents=True)
+        (workspace / "status.json").write_text(json.dumps({"state": "phase2", "timestamp": "2026-06-30T00:00:00Z"}))
+        (workspace / "benchmark.csv").write_text(
+            "\n".join(
+                [
+                    "timestamp,phase,iteration,candidate,workloads,correct,latency_ms,speedup,notes",
+                    "2026-06-30T00:00:00Z,phase2,1,candidate,16,16,0.10-2.80,1.3-3.6x,range only",
+                ]
+            )
+            + "\n"
+        )
+
+        rows = build_feishu_rows(build_local_snapshot(root), task_filter="L1-043")
+
+        self.assertEqual(rows[0]["Candidates"], 1)
+        self.assertIsNone(rows[0]["Speedup"])
+        self.assertIsNone(rows[0][FEISHU_LATENCY_FIELD])
+
     def test_speedup_formatting_and_feishu_rows(self) -> None:
         root = self.make_infra()
         workspace = root / "workspaces" / "fi_002_fused_add_rmsnorm_h4096"

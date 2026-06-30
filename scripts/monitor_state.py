@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json
+import math
+import re
 import shlex
 import subprocess
 import sys
@@ -86,6 +89,8 @@ FEISHU_STATUS_OPTION_ORDER = (
     "phase2_iteration2_complete",
     "phase2_complete",
     "phase3",
+    "phase3_iter1_done",
+    "phase3_iter1_complete",
     "phase3_iteration2_complete",
     "phase3_complete",
     "solution_validated",
@@ -170,6 +175,7 @@ TMUX_PANE_FORMAT = "\t".join(
 
 
 REMOTE_COLLECTOR = r'''
+import csv
 import json
 import subprocess
 import sys
@@ -210,6 +216,24 @@ def count_candidates(workspace):
     if not candidates.is_dir():
         return 0
     return sum(1 for path in candidates.iterdir() if path.is_file() and path.suffix == ".py")
+
+
+def read_benchmark(path):
+    try:
+        text = path.read_text(errors="replace")
+    except FileNotFoundError:
+        return {"rows": [], "row_count": 0, "error": "missing"}
+    except Exception as exc:
+        return {"rows": [], "row_count": 0, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        rows = [
+            dict(row)
+            for row in csv.DictReader(text.splitlines())
+            if any(str(value or "").strip() for value in row.values())
+        ]
+    except Exception as exc:
+        return {"rows": [], "row_count": 0, "error": f"{type(exc).__name__}: {exc}"}
+    return {"rows": rows[-50:], "row_count": len(rows), "error": None}
 
 
 def run_command(args):
@@ -255,10 +279,12 @@ workspaces_dir = root / "workspaces"
 if workspaces_dir.is_dir():
     for workspace in sorted(path for path in workspaces_dir.iterdir() if path.is_dir()):
         status = read_json(workspace / "status.json")
+        benchmark = read_benchmark(workspace / "benchmark.csv")
         payload["workspaces"][workspace.name] = {
             "status": status["data"],
             "status_error": status["error"],
-            "candidates": count_candidates(workspace),
+            "candidates": max(count_candidates(workspace), int(benchmark.get("row_count") or 0)),
+            "benchmark": benchmark,
         }
 else:
     payload["errors"].append("workspaces directory missing")
@@ -924,12 +950,26 @@ def parse_numeric_metric(value: Any) -> float | None:
         value = value.strip()
         if not value:
             return None
+        if value.lower() in {"n/a", "na", "nan", "none", "baseline", "ref_timeout", "mixed", "various", "inf", "infinity", "-inf", "-infinity"}:
+            return None
+        if re.search(r"\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?", value):
+            return None
         if value[-1:] in {"x", "X", "%"}:
             value = value[:-1].strip()
     try:
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     except (TypeError, ValueError):
-        return None
+        if not isinstance(value, str):
+            return None
+        match = re.match(r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*[xX%])?(?:\s|$|\()", value)
+        if not match:
+            return None
+        try:
+            parsed = float(match.group(1))
+            return parsed if math.isfinite(parsed) else None
+        except ValueError:
+            return None
 
 
 def nested_metric_value(data: dict[str, Any], path: str) -> Any:
@@ -1326,13 +1366,84 @@ def read_json_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
         return None, f"{type(exc).__name__}: {exc}"
 
 
+def read_benchmark_file(path: Path) -> dict[str, Any]:
+    try:
+        text = path.read_text(errors="replace")
+    except FileNotFoundError:
+        return {"rows": [], "row_count": 0, "error": "missing"}
+    except OSError as exc:
+        return {"rows": [], "row_count": 0, "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        rows = [
+            dict(row)
+            for row in csv.DictReader(text.splitlines())
+            if any(str(value or "").strip() for value in row.values())
+        ]
+    except csv.Error as exc:
+        return {"rows": [], "row_count": 0, "error": f"csv_error: {exc}"}
+    return {"rows": rows[-50:], "row_count": len(rows), "error": None}
+
+
 def count_candidates(workspace: Path | None) -> int:
     if workspace is None:
         return 0
     candidates = workspace / "candidates"
-    if not candidates.is_dir():
-        return 0
-    return sum(1 for path in candidates.iterdir() if path.is_file() and path.suffix == ".py")
+    candidate_files = 0
+    if candidates.is_dir():
+        candidate_files = sum(1 for path in candidates.iterdir() if path.is_file() and path.suffix == ".py")
+    benchmark = read_benchmark_file(workspace / "benchmark.csv")
+    return max(candidate_files, int(benchmark.get("row_count") or 0))
+
+
+def benchmark_metrics(benchmark: dict[str, Any] | None) -> dict[str, Any]:
+    rows = list((benchmark or {}).get("rows") or [])
+    latency = None
+    speedup = None
+    latest_candidate = ""
+    for row in reversed(rows):
+        if not latest_candidate:
+            latest_candidate = str(row.get("candidate") or "")
+        if latency is None:
+            latency = parse_numeric_metric(row.get("latency_ms"))
+        if speedup is None:
+            speedup = parse_numeric_metric(row.get("speedup"))
+        if latency is not None and speedup is not None and latest_candidate:
+            break
+    return {
+        "candidates": int((benchmark or {}).get("row_count") or len(rows)),
+        "latency": latency,
+        "speedup": speedup,
+        "latest_candidate": latest_candidate,
+    }
+
+
+def first_nested_numeric(data: Any, keys: tuple[str, ...]) -> float | None:
+    if isinstance(data, dict):
+        for key in keys:
+            if key in data:
+                value = parse_numeric_metric(data.get(key))
+                if value is not None:
+                    return value
+        for value in data.values():
+            nested = first_nested_numeric(value, keys)
+            if nested is not None:
+                return nested
+    elif isinstance(data, list):
+        for value in data:
+            nested = first_nested_numeric(value, keys)
+            if nested is not None:
+                return nested
+    return None
+
+
+def task_name_from_workspace(workspace: str | None) -> str:
+    if not workspace or "__" not in workspace:
+        return ""
+    suffix = workspace.split("__", 1)[1]
+    parts = suffix.split("_", 1)
+    if len(parts) == 2 and parts[0].isdigit():
+        return parts[1]
+    return suffix
 
 
 def normalize_task_row(
@@ -1342,6 +1453,7 @@ def normalize_task_row(
     candidates: int,
     workspace: str | None,
     status_error: str | None = None,
+    benchmark: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if workspace is None:
         state = "no_workspace"
@@ -1351,23 +1463,32 @@ def normalize_task_row(
         state = (status or {}).get("state", "pending")
 
     status_data = status or {}
-    latency = status_data.get("latency_ms")
+    benchmark_data = benchmark_metrics(benchmark)
+    latency = first_nested_numeric(status_data, ("best_latency_ms", "latency_ms", "latency"))
     if latency is None:
-        latency = status_data.get("latency")
+        latency = benchmark_data.get("latency")
+    speedup = first_nested_numeric(status_data, ("best_speedup_geomean", "speedup_vs_phase1", "phase2_speedup", "speedup"))
+    if speedup is None:
+        speedup = benchmark_data.get("speedup")
     mfu = status_data.get("mfu")
     if mfu is None:
         mfu = status_data.get("mfu_pct")
     if mfu is None:
         mfu = status_data.get("model_flops_utilization")
+    candidate_count = max(
+        candidates,
+        int(benchmark_data.get("candidates") or 0),
+        parse_int(status_data.get("solutions_committed")) or 0,
+    )
     return {
         "id": task_id,
         "group": task.get("group", ""),
-        "name": task.get("name", ""),
+        "name": task.get("name") or task_name_from_workspace(workspace),
         "bottleneck": task.get("bottleneck", ""),
         "status": state,
         "rounds": status_data.get("rounds", 0),
-        "candidates": candidates,
-        "speedup": status_data.get("speedup"),
+        "candidates": candidate_count,
+        "speedup": speedup,
         "latency": latency,
         "mfu": mfu,
         "updated": status_data.get("timestamp", ""),
@@ -1399,6 +1520,7 @@ def build_tasks_from_workspace_data(
                 int(workspace_data.get("candidates") or 0),
                 workspace_name,
                 workspace_data.get("status_error"),
+                workspace_data.get("benchmark"),
             )
         )
     return rows
@@ -1419,6 +1541,7 @@ def build_local_snapshot(infra_dir: str | Path = INFRA_DIR) -> dict[str, Any]:
             task_rows.append(normalize_task_row(task_id, task, None, 0, None))
             continue
         status, status_error = read_status_file(workspace / "status.json")
+        benchmark = read_benchmark_file(workspace / "benchmark.csv")
         task_rows.append(
             normalize_task_row(
                 task_id,
@@ -1427,6 +1550,7 @@ def build_local_snapshot(infra_dir: str | Path = INFRA_DIR) -> dict[str, Any]:
                 count_candidates(workspace),
                 workspace.name,
                 status_error,
+                benchmark,
             )
         )
 
