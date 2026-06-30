@@ -10,6 +10,11 @@ tmux_session: kda
 orchestrator_window: orchestrator
 ssh_options: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
 
+# Local advisor is documented as Codex for Mac-side inspection and planning.
+# This config records the role; it does not auto-launch Codex.
+local_advisor: codex
+local_loop_interval_seconds: 300
+
 # All worker monitor verdicts should be made by sonnet. Keep shadow until you
 # have inspected the generated observation and verdict JSON.
 monitor_model: sonnet

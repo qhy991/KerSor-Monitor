@@ -5,9 +5,15 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INFRA_DIR="$(dirname "$SCRIPT_DIR")"
+CONFIG_ENV="$INFRA_DIR/config.env"
+if [ -f "$CONFIG_ENV" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_ENV"
+fi
 WORKSPACES_DIR="$INFRA_DIR/workspaces"
 TEMPLATES_DIR="$INFRA_DIR/templates"
 TMUX_SESSION="${2:-kda}"
+WORKER_MODEL="${KDA_WORKER_MODEL:-claude-opus-4-6[1m]}"
 
 shell_quote() {
     printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
@@ -104,7 +110,7 @@ if [ "${KDA_OTEL_ENABLED:-0}" = "1" ]; then
     OTEL_BOOTSTRAP="export KDA_OTEL_ENABLED=1 KDA_TASK_ID=$(shell_quote "$TASK_ID") KDA_WORKSPACE=$(shell_quote "$WORKSPACE") KDA_OTEL_ENDPOINT=$(shell_quote "${KDA_OTEL_ENDPOINT:-http://127.0.0.1:4318}") KDA_OTEL_PROTOCOL=$(shell_quote "${KDA_OTEL_PROTOCOL:-http/json}"); . $(shell_quote "$OTEL_ENV_SCRIPT"); "
 fi
 tmux new-window -t "$TMUX_SESSION" -n "$WINDOW_NAME" \
-    "cd $(shell_quote "$WORKSPACE") && ${OTEL_BOOTSTRAP}claude --model 'claude-opus-4-6[1m]' --permission-mode auto $(shell_quote "$BOOT_PROMPT"); echo '=== Worker exited at \$(date) ==='; bash"
+    "cd $(shell_quote "$WORKSPACE") && ${OTEL_BOOTSTRAP}claude --model $(shell_quote "$WORKER_MODEL") --permission-mode auto $(shell_quote "$BOOT_PROMPT"); echo '=== Worker exited at \$(date) ==='; bash"
 
 # Start logging via tmux pipe-pane (captures output without breaking tty)
 tmux pipe-pane -t "$TMUX_SESSION:$WINDOW_NAME" -o "cat >> '$LOG_FILE'"

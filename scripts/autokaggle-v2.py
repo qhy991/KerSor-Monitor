@@ -18,6 +18,8 @@ import yaml
 DEFAULT_REMOTE_ROOT = "/workspace/repo/autokaggle"
 DEFAULT_SOL_ROOT = "/workspace/repo/SOL-ExecBench"
 DEFAULT_TASKS_YAML = Path(__file__).resolve().parent.parent / "tasks.yaml"
+DEFAULT_WORKER_MODEL = "claude-opus-4-6[1m]"
+DEFAULT_MONITOR_MODEL = "sonnet"
 
 
 REMOTE_BOOTSTRAP = r'''
@@ -45,7 +47,7 @@ start_count = int(payload["start_count"])
 slots_per_gpu = int(payload["slots_per_gpu"])
 preferred_gpus = payload.get("preferred_gpus") or []
 monitor_mode = payload.get("monitor_mode") or "active"
-worker_model = payload.get("worker_model") or "sonnet"
+worker_model = payload.get("worker_model") or "claude-opus-4-6[1m]"
 monitor_model = payload.get("monitor_model") or "sonnet"
 dry_run = bool(payload.get("dry_run"))
 
@@ -528,7 +530,7 @@ Every patrol:
 2. For each running worker, deterministically collect tmux identity, last 160 pane lines, `status.json`, `.humanize/rlcr` state, artifacts (`solution.json`, `benchmark.csv`, `solutions.jsonl`, `docs/draft.md`), GPU processes, and the GPU lock file.
 3. Write compact observation JSON under `observations/<task_id>.json`.
 4. Emit a strict verdict with `phase`, `activity`, `required_next_step`, `needs_human`, `nudge`, and `reason`.
-5. If mode is `active`, send a nudge only to that worker's `pane_id` when the required next step is clear. Use `tmux send-keys -t <pane_id> ... Enter`.
+5. If mode is `active`, send a nudge only to that worker's `pane_id` when the required next step is clear. Paste the nudge text with `tmux load-buffer` + `tmux paste-buffer`, then submit it with a separate `tmux send-keys ... Enter`; do not pass the message itself to `tmux send-keys`.
 
 Phase recipe: `1x phase1 + 3x phase2 + 3x phase3`. For repeated phase2/phase3, tell the worker to generate the next optimization direction from previous benchmark/profile evidence. Do not invent the optimization direction for the worker.
 
@@ -738,8 +740,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-count", type=int, default=8, help="Number of new v2 workers to start.")
     parser.add_argument("--slots-per-gpu", type=int, default=3, help="Logical v2 worker slots per GPU.")
     parser.add_argument("--gpus", help="Comma-separated GPU indexes to use. Defaults to all GPUs.")
-    parser.add_argument("--worker-model", default="sonnet", help="Claude model alias for workers.")
-    parser.add_argument("--monitor-model", default="sonnet", help="Claude model alias for the v2 monitor.")
+    parser.add_argument("--worker-model", default=DEFAULT_WORKER_MODEL, help="Claude model for workers.")
+    parser.add_argument("--monitor-model", default=DEFAULT_MONITOR_MODEL, help="Claude model for the v2 monitor.")
     parser.add_argument("--monitor-mode", choices=("shadow", "active"), default="active", help="Monitor actuator mode.")
     parser.add_argument("--dry-run", action="store_true", help="Print remote start plan without creating sessions.")
     return parser

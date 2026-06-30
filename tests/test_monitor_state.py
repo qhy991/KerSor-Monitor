@@ -156,6 +156,8 @@ class MonitorStateTests(unittest.TestCase):
 
         self.assertEqual(loaded["monitor_model"], "sonnet")
         self.assertEqual(loaded["monitor_mode"], "shadow")
+        self.assertEqual(loaded["local_advisor"], "codex")
+        self.assertEqual(loaded["local_loop_interval_seconds"], 300)
         self.assertEqual(loaded["phase_recipe"], {"phase1": 1, "phase2": 3, "phase3": 3})
         self.assertEqual(loaded["control_plane"]["name"], "v2")
         self.assertEqual(loaded["feishu"]["base_token"], "")
@@ -402,8 +404,26 @@ class MonitorStateTests(unittest.TestCase):
         self.assertFalse(shadow["will_send"])
         self.assertTrue(active["will_send"])
         self.assertEqual(active["command"], pane_cmd)
-        self.assertIn("tmux send-keys -t %20", pane_cmd[-1])
+        self.assertIn("load-buffer", pane_cmd[-1])
+        self.assertIn("paste-buffer", pane_cmd[-1])
+        self.assertIn("send-keys", pane_cmd[-1])
         self.assertNotIn("start-worker.sh", " ".join(active["command"]))
+
+    def test_worker_actuator_pastes_message_before_enter_so_key_names_are_literal(self) -> None:
+        config = {
+            "ssh_host": "H100-lsh",
+            "remote_root": "/workspace/repo/autokaggle",
+            "tmux_session": "kda",
+            "orchestrator_window": "orchestrator",
+        }
+        cmd = build_tmux_pane_send_command(config, "%20", "Enter")
+        remote_cmd = cmd[-1]
+
+        self.assertIn("python3 -c", remote_cmd)
+        self.assertIn("RW50ZXI=", remote_cmd)
+        self.assertIn("paste-buffer", remote_cmd)
+        self.assertIn("send-keys", remote_cmd)
+        self.assertNotIn("tmux send-keys -t %20 Enter Enter", remote_cmd)
 
     def test_legacy_binding_parse_and_snapshot_is_read_only(self) -> None:
         line = "023\t023_rmsnorm_h1536\t/workspace/repo/autokaggle/tasks/023_rmsnorm_h1536\tGPU-abcd\t1\t%23\t@20\trunning"

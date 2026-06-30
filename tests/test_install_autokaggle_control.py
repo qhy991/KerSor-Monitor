@@ -77,6 +77,32 @@ class InstallAutokaggleControlTests(unittest.TestCase):
         self.assertEqual(sources["KernelWiki"], "/workspace/repo/kernel-design-agents/skills/KernelWiki")
         self.assertEqual(sources["ncu-report-skill"], "/workspace/repo/kernel-design-agents/skills/ncu-report-skill")
 
+    def test_default_config_json_contains_structured_roles_and_limits(self) -> None:
+        installer = load_installer_module()
+        args = SimpleNamespace(
+            remote_root="/workspace/repo/autokaggle",
+            sol_root="/workspace/repo/SOL-ExecBench",
+            tmux_session="ak-v2",
+            skill_version="current",
+        )
+
+        data = json.loads(installer.build_config_json(args))
+
+        self.assertEqual(data["roles"]["worker"]["model"], "claude-opus-4-6[1m]")
+        self.assertEqual(data["roles"]["orchestrator"]["model"], "claude-opus-4-6[1m]")
+        self.assertEqual(data["roles"]["monitor"]["model"], "sonnet")
+        self.assertEqual(data["roles"]["local_advisor"]["runner"], "codex")
+        self.assertEqual(data["scheduler"]["max_active_workers"], 24)
+        self.assertEqual(data["scheduler"]["max_per_gpu_workers"], 3)
+        self.assertEqual(data["scheduler"]["max_starts_per_tick"], 8)
+        self.assertEqual(data["gpu"]["lock_dir"], "/tmp")
+        self.assertEqual(data["loops"]["orchestrator_interval_minutes"], 5)
+        self.assertEqual(data["loops"]["monitor_interval_minutes"], 20)
+        self.assertEqual(data["phase_recipe"], {"phase1": 1, "phase2": 3, "phase3": 3})
+        self.assertEqual(data["worker_model"], "claude-opus-4-6[1m]")
+        self.assertEqual(data["orchestrator_model"], "claude-opus-4-6[1m]")
+        self.assertEqual(data["monitor_model"], "sonnet")
+
     def test_generated_akctl_doctor_offline_on_fake_tree(self) -> None:
         installer = load_installer_module()
         root = self.make_root()
@@ -150,12 +176,20 @@ class InstallAutokaggleControlTests(unittest.TestCase):
         (control / "config.json").write_text(
             json.dumps(
                 {
-                    "remote_root": str(root),
-                    "sol_root": str(sol_root),
-                    "tmux_session": "ak-v2",
-                    "max_active_workers": 1,
-                    "max_per_gpu_workers": 1,
-                    "max_starts_per_tick": 1,
+                    "paths": {"remote_root": str(root), "sol_root": str(sol_root), "tmux_session": "ak-v2"},
+                    "scheduler": {
+                        "queue_config": "configs/all-kernel-active.tsv",
+                        "max_active_workers": 1,
+                        "max_per_gpu_workers": 1,
+                        "max_starts_per_tick": 1,
+                        "default_monitor_mode": "active",
+                    },
+                    "roles": {
+                        "worker": {"runner": "claude", "model": "claude-opus-4-6[1m]", "permission_mode": "bypassPermissions"},
+                        "orchestrator": {"runner": "claude", "model": "claude-opus-4-6[1m]", "permission_mode": "bypassPermissions"},
+                        "monitor": {"runner": "claude", "model": "sonnet", "permission_mode": "bypassPermissions"},
+                        "local_advisor": {"runner": "codex"},
+                    },
                 }
             )
         )
@@ -207,6 +241,12 @@ class InstallAutokaggleControlTests(unittest.TestCase):
         self.assertIn("max_starts_per_tick", script)
         self.assertIn("orchestrator_loop_prompt", script)
         self.assertIn("legacy_workspace", script)
+        self.assertIn("registry.pop(\"orchestrator\", None)", script)
+        self.assertIn("normalize_config", script)
+        self.assertIn("role_model('worker')", script)
+        self.assertIn("role_model('orchestrator')", script)
+        self.assertIn("role_model('monitor')", script)
+        self.assertIn("role_permission_mode('worker')", script)
 
 
 if __name__ == "__main__":

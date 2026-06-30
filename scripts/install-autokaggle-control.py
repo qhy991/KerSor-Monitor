@@ -23,11 +23,21 @@ DEFAULT_SOL_ROOT = "/workspace/repo/SOL-ExecBench"
 DEFAULT_TASKS = REPO_ROOT / "tasks.yaml"
 DEFAULT_TMUX_SESSION = "ak-v2"
 DEFAULT_SKILL_VERSION = "current"
+DEFAULT_WORKER_MODEL = "claude-opus-4-6[1m]"
+DEFAULT_ORCHESTRATOR_MODEL = "claude-opus-4-6[1m]"
+DEFAULT_MONITOR_MODEL = "sonnet"
+DEFAULT_LOCAL_ADVISOR_RUNNER = "codex"
+DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions"
 DEFAULT_MAX_ACTIVE_WORKERS = 24
 DEFAULT_MAX_PER_GPU_WORKERS = 3
 DEFAULT_MAX_STARTS_PER_TICK = 8
 DEFAULT_MONITOR_LOOP_INTERVAL_MINUTES = 20
 DEFAULT_ORCHESTRATOR_LOOP_INTERVAL_MINUTES = 5
+DEFAULT_QUEUE_CONFIG = "configs/all-kernel-active.tsv"
+DEFAULT_GPU_COUNT = 8
+DEFAULT_GPU_LOCK_DIR = "/tmp"
+DEFAULT_GPU_LOCK_FILE_TEMPLATE = "autokaggle-gpu-{gpu_uuid}.lock"
+DEFAULT_PHASE_RECIPE = {"phase1": 1, "phase2": 3, "phase3": 3}
 DEFAULT_KERNELWIKI_SOURCE = "/workspace/repo/kernel-design-agents/skills/KernelWiki"
 DEFAULT_NCU_SOURCE = "/workspace/repo/kernel-design-agents/skills/ncu-report-skill"
 REMOTE_RUNNER = (
@@ -251,15 +261,18 @@ Do not modify legacy `/workspace/repo/autokaggle/tasks/*` directories.
 def build_monitor_role_template() -> str:
     return """# AutoKaggle v2 Per-Worker Monitor
 
-Use model: sonnet.
+Use model: configured `roles.monitor.model` from `config.json` (default: sonnet).
 
 You monitor exactly one worker from `registry.json`. Collect deterministic
 evidence first: tmux pane identity, last pane lines, status files, artifacts,
 GPU processes, and GPU lock state. Emit an observation JSON before any action.
 
-In `shadow` mode, never send a nudge. In `active` mode, only send keys to the
-registered worker `pane_id` when `control.managed_by == "v2"` and
-`control.read_only == false`.
+In `shadow` mode, never send a nudge. In `active` mode, paste nudge text into
+the registered worker `pane_id` with `tmux load-buffer` + `tmux paste-buffer`,
+then submit it with a separate `tmux send-keys ... Enter`, and only when
+`control.managed_by == "v2"` and `control.read_only == false`. Do not pass the
+nudge message itself to `tmux send-keys`; tmux can interpret words such as
+`Enter`, `Space`, `Tab`, or `C-c` as key names instead of text.
 
 Enforce the recipe `1x phase1 + 3x phase2 + 3x phase3`; for repeated phase2/3,
 ask the worker to derive the next optimization direction from previous results.
@@ -284,7 +297,7 @@ Use:
 """
 
 
-def build_start_plan_text(tasks_text: str, *, gpu_count: int = 8, monitor_mode: str = "active") -> str:
+def build_start_plan_text(tasks_text: str, *, gpu_count: int = DEFAULT_GPU_COUNT, monitor_mode: str = "active") -> str:
     data = yaml.safe_load(tasks_text) or {}
     lines = [
         "# task_id gpu slot gpu_uuid monitor_mode",
@@ -333,6 +346,16 @@ DEFAULT_MAX_PER_GPU_WORKERS = 3
 DEFAULT_MAX_STARTS_PER_TICK = 8
 DEFAULT_MONITOR_LOOP_INTERVAL_MINUTES = 20
 DEFAULT_ORCHESTRATOR_LOOP_INTERVAL_MINUTES = 5
+DEFAULT_WORKER_MODEL = "claude-opus-4-6[1m]"
+DEFAULT_ORCHESTRATOR_MODEL = "claude-opus-4-6[1m]"
+DEFAULT_MONITOR_MODEL = "sonnet"
+DEFAULT_LOCAL_ADVISOR_RUNNER = "codex"
+DEFAULT_CLAUDE_PERMISSION_MODE = "bypassPermissions"
+DEFAULT_QUEUE_CONFIG = "configs/all-kernel-active.tsv"
+DEFAULT_GPU_COUNT = 8
+DEFAULT_GPU_LOCK_DIR = "/tmp"
+DEFAULT_GPU_LOCK_FILE_TEMPLATE = "autokaggle-gpu-{gpu_uuid}.lock"
+DEFAULT_PHASE_RECIPE = {"phase1": 1, "phase2": 3, "phase3": 3}
 
 
 def now_iso() -> str:
@@ -355,22 +378,130 @@ def run(args: list[str], *, check: bool = True, timeout: int = 30) -> subprocess
     return result
 
 
+def normalize_phase_recipe(recipe: dict | None = None) -> dict:
+    normalized = dict(DEFAULT_PHASE_RECIPE)
+    for key in normalized:
+        try:
+            value = int((recipe or {}).get(key, normalized[key]))
+        except (TypeError, ValueError):
+            value = normalized[key]
+        normalized[key] = max(0, value)
+    return normalized
+
+
+def default_config() -> dict:
+    return normalize_config({})
+
+
+def normalize_config(raw: dict | None) -> dict:
+    data = dict(raw or {})
+    paths = dict(data.get("paths") or {})
+    roles = dict(data.get("roles") or {})
+    scheduler = dict(data.get("scheduler") or {})
+    gpu = dict(data.get("gpu") or {})
+    loops = dict(data.get("loops") or {})
+    skills = dict(data.get("skills") or {})
+    telemetry = dict(data.get("telemetry") or {})
+
+    paths.setdefault("remote_root", data.get("remote_root") or str(CONTROL_DIR.parent))
+    paths.setdefault("sol_root", data.get("sol_root") or "/workspace/repo/SOL-ExecBench")
+    paths.setdefault("tmux_session", data.get("tmux_session") or "ak-v2")
+
+    def normalize_role(name: str, default_model: str, legacy_key: str | None = None) -> dict:
+        role = dict(roles.get(name) or {})
+        role.setdefault("runner", "claude")
+        legacy_model = data.get(legacy_key) if legacy_key else None
+        role.setdefault("model", legacy_model or default_model)
+        role.setdefault("permission_mode", data.get("permission_mode") or DEFAULT_CLAUDE_PERMISSION_MODE)
+        return role
+
+    roles["worker"] = normalize_role("worker", DEFAULT_WORKER_MODEL, "worker_model")
+    roles["orchestrator"] = normalize_role("orchestrator", DEFAULT_ORCHESTRATOR_MODEL, "orchestrator_model")
+    roles["monitor"] = normalize_role("monitor", DEFAULT_MONITOR_MODEL, "monitor_model")
+    local_advisor = dict(roles.get("local_advisor") or {})
+    local_advisor.setdefault("runner", data.get("local_advisor") or DEFAULT_LOCAL_ADVISOR_RUNNER)
+    roles["local_advisor"] = local_advisor
+
+    scheduler.setdefault("queue_config", data.get("queue_config") or DEFAULT_QUEUE_CONFIG)
+    scheduler.setdefault("max_active_workers", data.get("max_active_workers", DEFAULT_MAX_ACTIVE_WORKERS))
+    scheduler.setdefault("max_per_gpu_workers", data.get("max_per_gpu_workers", DEFAULT_MAX_PER_GPU_WORKERS))
+    scheduler.setdefault("max_starts_per_tick", data.get("max_starts_per_tick", DEFAULT_MAX_STARTS_PER_TICK))
+    scheduler.setdefault("default_monitor_mode", data.get("monitor_mode") or "active")
+
+    gpu.setdefault("default_gpu_count", data.get("default_gpu_count", DEFAULT_GPU_COUNT))
+    gpu.setdefault("lock_dir", data.get("gpu_lock_dir") or DEFAULT_GPU_LOCK_DIR)
+    gpu.setdefault("lock_file_template", data.get("gpu_lock_file_template") or DEFAULT_GPU_LOCK_FILE_TEMPLATE)
+
+    loops.setdefault("orchestrator_interval_minutes", data.get("orchestrator_loop_interval_minutes", DEFAULT_ORCHESTRATOR_LOOP_INTERVAL_MINUTES))
+    loops.setdefault("monitor_interval_minutes", data.get("monitor_loop_interval_minutes", DEFAULT_MONITOR_LOOP_INTERVAL_MINUTES))
+
+    skills.setdefault("version", data.get("skill_version") or "current")
+    telemetry.setdefault("enabled", False)
+    telemetry.setdefault("endpoint", "http://127.0.0.1:4318")
+    telemetry.setdefault("protocol", "http/json")
+
+    data["paths"] = paths
+    data["roles"] = roles
+    data["scheduler"] = scheduler
+    data["gpu"] = gpu
+    data["loops"] = loops
+    data["skills"] = skills
+    data["telemetry"] = telemetry
+    data["phase_recipe"] = normalize_phase_recipe(data.get("phase_recipe"))
+
+    # Compatibility aliases for older code paths and hand-written configs.
+    data["remote_root"] = paths["remote_root"]
+    data["sol_root"] = paths["sol_root"]
+    data["tmux_session"] = paths["tmux_session"]
+    data["worker_model"] = roles["worker"]["model"]
+    data["orchestrator_model"] = roles["orchestrator"]["model"]
+    data["monitor_model"] = roles["monitor"]["model"]
+    data["local_advisor"] = roles["local_advisor"]["runner"]
+    data["max_active_workers"] = scheduler["max_active_workers"]
+    data["max_per_gpu_workers"] = scheduler["max_per_gpu_workers"]
+    data["max_starts_per_tick"] = scheduler["max_starts_per_tick"]
+    data["monitor_loop_interval_minutes"] = loops["monitor_interval_minutes"]
+    data["orchestrator_loop_interval_minutes"] = loops["orchestrator_interval_minutes"]
+    data["gpu_lock_dir"] = gpu["lock_dir"]
+    return data
+
+
 def load_config() -> dict:
     path = CONTROL_DIR / "config.json"
     if not path.is_file():
-        return {
-            "remote_root": str(CONTROL_DIR.parent),
-            "sol_root": "/workspace/repo/SOL-ExecBench",
-            "tmux_session": "ak-v2",
-            "worker_model": "sonnet",
-            "monitor_model": "sonnet",
-            "max_active_workers": DEFAULT_MAX_ACTIVE_WORKERS,
-            "max_per_gpu_workers": DEFAULT_MAX_PER_GPU_WORKERS,
-            "max_starts_per_tick": DEFAULT_MAX_STARTS_PER_TICK,
-            "monitor_loop_interval_minutes": DEFAULT_MONITOR_LOOP_INTERVAL_MINUTES,
-            "orchestrator_loop_interval_minutes": DEFAULT_ORCHESTRATOR_LOOP_INTERVAL_MINUTES,
-        }
-    return json.loads(path.read_text())
+        return default_config()
+    return normalize_config(json.loads(path.read_text()))
+
+
+def role_config(name: str) -> dict:
+    return dict((load_config().get("roles") or {}).get(name) or {})
+
+
+def role_model(name: str) -> str:
+    defaults = {"worker": DEFAULT_WORKER_MODEL, "orchestrator": DEFAULT_ORCHESTRATOR_MODEL, "monitor": DEFAULT_MONITOR_MODEL}
+    return str(role_config(name).get("model") or defaults.get(name) or "")
+
+
+def role_permission_mode(name: str) -> str:
+    return str(role_config(name).get("permission_mode") or DEFAULT_CLAUDE_PERMISSION_MODE)
+
+
+def default_monitor_mode() -> str:
+    mode = str(((load_config().get("scheduler") or {}).get("default_monitor_mode")) or "active").lower()
+    return mode if mode in {"shadow", "active"} else "active"
+
+
+def gpu_lock_file(gpu_uuid: str, gpu_index: int | str | None = None) -> str:
+    gpu_config = load_config().get("gpu") or {}
+    template = str(gpu_config.get("lock_file_template") or DEFAULT_GPU_LOCK_FILE_TEMPLATE)
+    try:
+        name = template.format(gpu_uuid=gpu_uuid, gpu_index=gpu_index if gpu_index is not None else "")
+    except Exception:
+        name = DEFAULT_GPU_LOCK_FILE_TEMPLATE.format(gpu_uuid=gpu_uuid)
+    path = Path(name)
+    if path.is_absolute():
+        return str(path)
+    return str(Path(str(gpu_config.get("lock_dir") or DEFAULT_GPU_LOCK_DIR)) / path)
 
 
 def root_dir() -> Path:
@@ -440,8 +571,8 @@ def parse_start_batch_config(path: Path) -> list[dict]:
             continue
         if len(parts) < 3:
             raise RuntimeError(f"{path}:{lineno}: expected task_id gpu slot [gpu_uuid] [monitor_mode]")
-        monitor_mode = parts[4] if len(parts) >= 5 else "active"
-        if monitor_mode not in {"shadow", "active"}:
+        monitor_mode = parts[4] if len(parts) >= 5 else None
+        if monitor_mode is not None and monitor_mode not in {"shadow", "active"}:
             raise RuntimeError(f"{path}:{lineno}: monitor_mode must be shadow or active")
         rows.append(
             {
@@ -544,7 +675,7 @@ def resolve_control_path(value: str | None, default: str) -> Path:
 
 
 def default_queue_config() -> Path:
-    return CONTROL_DIR / "configs" / "all-kernel-active.tsv"
+    return resolve_control_path(((load_config().get("scheduler") or {}).get("queue_config")), DEFAULT_QUEUE_CONFIG)
 
 
 def new_task_block_reason(task: dict) -> str | None:
@@ -689,7 +820,9 @@ def add_fake_active_record(registry: dict, task: dict, gpu: dict, slot: int, mon
         "workspace": str(CONTROL_DIR / "workspaces" / workspace_name(task)),
         "smoke": False,
         "gpu": {"index": int(gpu["index"]), "uuid": gpu["uuid"], "slot": slot},
-        "monitor": {"mode": monitor_mode},
+        "phase": {"name": "phase1", "iteration": 1, "recipe": load_config()["phase_recipe"]},
+        "worker_model": role_model("worker"),
+        "monitor": {"model": role_model("monitor"), "mode": monitor_mode},
         "started_at": now_iso(),
     }
 
@@ -877,8 +1010,8 @@ def monitor_loop_prompt(task_id: str, mode: str, interval_minutes: int | None = 
 Each loop iteration:
 1. Collect deterministic evidence first: registry identity, worker tmux pane metadata, last worker pane lines, workspace status.json, docs/artifacts/runs, GPU process ownership from pane_pid descendants, and GPU lock status.
 2. Write compact observation JSON to observations/{task_id}.json with observed_at, phase/activity, safety findings, required_next_step, needs_human, nudge, and reason.
-3. Use sonnet judgment to decide if the worker is progressing, stalled, bypassing required skills, violating GPU lock rules, or out of phase order.
-4. In shadow mode, never nudge. In active mode, send a nudge only to the registry worker pane_id and only when control.managed_by is v2 and control.read_only is false.
+3. Use {role_model('monitor')} judgment to decide if the worker is progressing, stalled, bypassing required skills, violating GPU lock rules, or out of phase order.
+4. In shadow mode, never nudge. In active mode, paste the nudge text into the registry worker pane_id with `tmux load-buffer` + `tmux paste-buffer`, then submit it with a separate `tmux send-keys ... Enter`, and only when control.managed_by is v2 and control.read_only is false. Do not pass the nudge message itself to `tmux send-keys`; tmux can interpret words such as Enter, Space, Tab, or C-c as key names instead of text.
 5. Enforce 1x phase1 + 3x phase2 + 3x phase3. For repeated phase2/phase3, ask the worker to derive the next optimization direction from previous results; do not invent the optimization direction yourself.
 6. Keep looping until the worker reaches a terminal state such as promoted, abandoned, crashed, failed, or the registry entry is removed.
 
@@ -944,9 +1077,20 @@ def start_orchestrator(args: argparse.Namespace | None = None, *, smoke: bool = 
         command = "echo 'ak-v2 smoke orchestrator ready'; bash"
     else:
         prompt = "Read roles/orchestrator/CLAUDE.md and wait for explicit /local-monitor or akctl requests."
-        command = f"claude --model sonnet --permission-mode bypassPermissions --name ak-v2-orchestrator {sh(prompt)}; bash"
+        command = (
+            f"claude --model {sh(role_model('orchestrator'))} "
+            f"--permission-mode {sh(role_permission_mode('orchestrator'))} "
+            f"--name ak-v2-orchestrator {sh(prompt)}; bash"
+        )
     identity = start_window(window, command)
-    registry["orchestrator"] = {"window": window, "worker": identity, "smoke": smoke, "updated_at": now_iso()}
+    registry["orchestrator"] = {
+        "window": window,
+        "worker": identity,
+        "model": role_model("orchestrator"),
+        "runner": role_config("orchestrator").get("runner", "claude"),
+        "smoke": smoke,
+        "updated_at": now_iso(),
+    }
     write_registry(registry)
     if print_report:
         print(json.dumps(registry["orchestrator"], indent=2))
@@ -963,7 +1107,8 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
         raise RuntimeError(f"task already in v2 registry: {task['id']}")
     workspace = create_workspace(task, gpu=args.gpu, slot=args.slot, smoke=smoke)
     gpu_uuid = args.gpu_uuid or f"GPU-index-{args.gpu}"
-    lock_file = f"/tmp/autokaggle-gpu-{gpu_uuid}.lock"
+    monitor_mode = args.monitor_mode or default_monitor_mode()
+    lock_file = gpu_lock_file(gpu_uuid, args.gpu)
     worker_window = f"worker-{task['id']}"
     monitor_window = f"monitor-{task['id']}"
     env = (
@@ -975,7 +1120,12 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
         worker_cmd = env + f"python3 {sh(CONTROL_DIR / 'bin' / 'smoke_worker.py')} --workspace {sh(workspace)} --task {sh(task['id'])}; bash"
     else:
         prompt = "Read CLAUDE.md, docs/problem.md, and docs/phase1.md. Begin Phase 1 and use only control-v2 GPU wrappers."
-        worker_cmd = env + f"claude --model sonnet --permission-mode bypassPermissions --name {sh(worker_window)} {sh(prompt)}; bash"
+        worker_cmd = (
+            env
+            + f"claude --model {sh(role_model('worker'))} "
+            + f"--permission-mode {sh(role_permission_mode('worker'))} "
+            + f"--name {sh(worker_window)} {sh(prompt)}; bash"
+        )
     worker_identity = start_window(worker_window, worker_cmd, cwd=workspace)
     record = {
         "task_id": task["id"],
@@ -986,20 +1136,25 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
         "control": {"managed_by": "v2", "read_only": False},
         "worker": worker_identity,
         "gpu": {"index": args.gpu, "uuid": gpu_uuid, "slot": args.slot, "lock_file": lock_file},
-        "phase": {"name": "phase1", "iteration": 1, "recipe": {"phase1": 1, "phase2": 3, "phase3": 3}},
-        "monitor": {"model": "sonnet", "mode": args.monitor_mode, "last_observed_at": None, "last_nudge_at": None},
+        "phase": {"name": "phase1", "iteration": 1, "recipe": load_config()["phase_recipe"]},
+        "worker_model": role_model("worker"),
+        "monitor": {"model": role_model("monitor"), "mode": monitor_mode, "last_observed_at": None, "last_nudge_at": None},
         "started_at": now_iso(),
     }
     registry.setdefault("tasks", {})[task["id"]] = record
     write_registry(registry)
 
     if smoke:
-        monitor_cmd = f"python3 {sh(CONTROL_DIR / 'bin' / 'smoke_monitor.py')} --control-dir {sh(CONTROL_DIR)} --task {sh(task['id'])} --mode {sh(args.monitor_mode)}; bash"
+        monitor_cmd = f"python3 {sh(CONTROL_DIR / 'bin' / 'smoke_monitor.py')} --control-dir {sh(CONTROL_DIR)} --task {sh(task['id'])} --mode {sh(monitor_mode)}; bash"
     else:
-        monitor_cmd = f"claude --model sonnet --permission-mode bypassPermissions --name {sh(monitor_window)}; bash"
+        monitor_cmd = (
+            f"claude --model {sh(role_model('monitor'))} "
+            f"--permission-mode {sh(role_permission_mode('monitor'))} "
+            f"--name {sh(monitor_window)}; bash"
+        )
     monitor_identity = start_window(monitor_window, monitor_cmd)
     if not smoke:
-        loop_info = submit_claude_loop(str(monitor_identity.get("pane_id") or ""), monitor_loop_prompt(task["id"], args.monitor_mode))
+        loop_info = submit_claude_loop(str(monitor_identity.get("pane_id") or ""), monitor_loop_prompt(task["id"], monitor_mode))
     else:
         loop_info = {}
     registry = load_registry()
@@ -1106,6 +1261,11 @@ def run_smoke_clean(args: argparse.Namespace) -> int:
     record = registry.get("tasks", {}).get(task["id"])
     if record and record.get("smoke"):
         registry["tasks"].pop(task["id"], None)
+    orchestrator = registry.get("orchestrator") or {}
+    if orchestrator.get("smoke") and tmux_window_exists("orchestrator"):
+        run(["tmux", "kill-window", "-t", f"{tmux_session()}:orchestrator"], check=False)
+        registry.pop("orchestrator", None)
+    if record and record.get("smoke") or orchestrator.get("smoke"):
         write_registry(registry)
     print(json.dumps({"ok": True, "cleaned": task["id"]}, indent=2))
     return 0
@@ -1163,7 +1323,7 @@ def run_patrol(args: argparse.Namespace) -> int:
         row = pending[0]
         try:
             task = find_task(row["task"])
-            monitor_mode = args.monitor_mode or row.get("monitor_mode") or "active"
+            monitor_mode = args.monitor_mode or row.get("monitor_mode") or default_monitor_mode()
             if args.dry_run:
                 add_fake_active_record(working, task, gpu, slot, monitor_mode)
                 would_start.append({"task": task["id"], "gpu": gpu["index"], "slot": slot, "monitor_mode": monitor_mode})
@@ -1225,7 +1385,7 @@ def run_loop(args: argparse.Namespace) -> int:
     max_per_gpu = args.max_per_gpu if args.max_per_gpu is not None else int(cfg.get("max_per_gpu_workers", DEFAULT_MAX_PER_GPU_WORKERS))
     max_starts = args.max_starts_per_tick if args.max_starts_per_tick is not None else int(cfg.get("max_starts_per_tick", DEFAULT_MAX_STARTS_PER_TICK))
     max_starts = max(0, max_starts)
-    monitor_mode = args.monitor_mode or "active"
+    monitor_mode = args.monitor_mode or default_monitor_mode()
     identity = start_orchestrator(print_report=False)
     prompt = orchestrator_loop_prompt(
         interval_minutes=interval,
@@ -1284,15 +1444,16 @@ def run_start_batch(args: argparse.Namespace) -> int:
             gpu_uuid = row["gpu_uuid"]
             if not gpu_uuid or gpu_uuid.lower() == "auto":
                 gpu_uuid = resolve_gpu_uuid(row["gpu"])
+            monitor_mode = row.get("monitor_mode") or default_monitor_mode()
             task_args = argparse.Namespace(
                 task=task["id"],
                 gpu=row["gpu"],
                 slot=row["slot"],
                 gpu_uuid=gpu_uuid,
-                monitor_mode=row["monitor_mode"],
+                monitor_mode=monitor_mode,
             )
             start_task(task_args)
-            started.append({"task": task["id"], "gpu": row["gpu"], "slot": row["slot"], "monitor_mode": row["monitor_mode"]})
+            started.append({"task": task["id"], "gpu": row["gpu"], "slot": row["slot"], "monitor_mode": monitor_mode})
         except Exception as exc:
             errors.append({"line": row.get("line"), "task": row.get("task"), "error": f"{type(exc).__name__}: {exc}"})
             if not args.keep_going:
@@ -1353,28 +1514,28 @@ def build_parser() -> argparse.ArgumentParser:
     orchestrator.set_defaults(func=lambda args: 0 if start_orchestrator(args) else 1)
 
     status = subparsers.add_parser("status")
-    status.add_argument("--config", default="configs/all-kernel-active.tsv", help="Queue config relative to control-v2 or absolute path.")
+    status.add_argument("--config", help="Queue config relative to control-v2 or absolute path. Default comes from config.json.")
     status.add_argument("--max-active", type=int, help="Maximum active v2 workers. Default comes from config.json.")
     status.add_argument("--max-per-gpu", type=int, help="Maximum active v2 workers per GPU. Default comes from config.json.")
     status.set_defaults(func=run_status)
 
     patrol = subparsers.add_parser("patrol")
-    patrol.add_argument("--config", default="configs/all-kernel-active.tsv", help="Queue config relative to control-v2 or absolute path.")
+    patrol.add_argument("--config", help="Queue config relative to control-v2 or absolute path. Default comes from config.json.")
     patrol.add_argument("--max-active", type=int, help="Maximum active v2 workers. Default comes from config.json.")
     patrol.add_argument("--max-per-gpu", type=int, help="Maximum active v2 workers per GPU. Default comes from config.json.")
     patrol.add_argument("--max-starts-per-tick", type=int, help="Maximum new workers to start in this patrol. Default comes from config.json.")
-    patrol.add_argument("--monitor-mode", choices=("shadow", "active"), default="active")
+    patrol.add_argument("--monitor-mode", choices=("shadow", "active"), help="Monitor actuator mode. Default comes from config.json.")
     patrol.add_argument("--dry-run", action="store_true", help="Plan starts without creating tmux windows or workspaces.")
     patrol.add_argument("--keep-going", action="store_true", help="Continue after a task start error.")
     patrol.set_defaults(func=run_patrol)
 
     loop = subparsers.add_parser("loop")
-    loop.add_argument("--config", default="configs/all-kernel-active.tsv", help="Queue config relative to control-v2 or absolute path.")
+    loop.add_argument("--config", help="Queue config relative to control-v2 or absolute path. Default comes from config.json.")
     loop.add_argument("--interval-minutes", type=int, help="Claude Code /loop cadence for orchestrator patrols.")
     loop.add_argument("--max-active", type=int, help="Maximum active v2 workers. Default comes from config.json.")
     loop.add_argument("--max-per-gpu", type=int, help="Maximum active v2 workers per GPU. Default comes from config.json.")
     loop.add_argument("--max-starts-per-tick", type=int, help="Maximum new workers per patrol. Default comes from config.json.")
-    loop.add_argument("--monitor-mode", choices=("shadow", "active"), default="active")
+    loop.add_argument("--monitor-mode", choices=("shadow", "active"), help="Monitor actuator mode. Default comes from config.json.")
     loop.set_defaults(func=run_loop)
 
     start = subparsers.add_parser("start-task")
@@ -1382,7 +1543,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--gpu", type=int, required=True)
     start.add_argument("--slot", type=int, required=True)
     start.add_argument("--gpu-uuid")
-    start.add_argument("--monitor-mode", choices=("shadow", "active"), default="shadow")
+    start.add_argument("--monitor-mode", choices=("shadow", "active"), help="Monitor actuator mode. Default comes from config.json.")
     start.set_defaults(func=lambda args: 0 if start_task(args) else 1)
 
     monitor_loop = subparsers.add_parser("start-monitor-loop")
@@ -1408,7 +1569,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--gpu", type=int, required=True)
     smoke.add_argument("--slot", type=int, required=True)
     smoke.add_argument("--gpu-uuid")
-    smoke.add_argument("--monitor-mode", choices=("shadow", "active"), default="shadow")
+    smoke.add_argument("--monitor-mode", choices=("shadow", "active"), help="Monitor actuator mode. Default comes from config.json.")
     smoke.set_defaults(func=run_smoke)
 
     clean = subparsers.add_parser("smoke-clean")
@@ -1446,18 +1607,79 @@ def build_registry_skeleton(remote_root: str, sol_root: str) -> str:
 
 
 def build_config_json(args: argparse.Namespace) -> str:
+    roles = {
+        "worker": {
+            "runner": "claude",
+            "model": DEFAULT_WORKER_MODEL,
+            "permission_mode": DEFAULT_CLAUDE_PERMISSION_MODE,
+        },
+        "orchestrator": {
+            "runner": "claude",
+            "model": DEFAULT_ORCHESTRATOR_MODEL,
+            "permission_mode": DEFAULT_CLAUDE_PERMISSION_MODE,
+        },
+        "monitor": {
+            "runner": "claude",
+            "model": DEFAULT_MONITOR_MODEL,
+            "permission_mode": DEFAULT_CLAUDE_PERMISSION_MODE,
+        },
+        "local_advisor": {
+            "runner": DEFAULT_LOCAL_ADVISOR_RUNNER,
+        },
+    }
+    scheduler = {
+        "queue_config": DEFAULT_QUEUE_CONFIG,
+        "max_active_workers": DEFAULT_MAX_ACTIVE_WORKERS,
+        "max_per_gpu_workers": DEFAULT_MAX_PER_GPU_WORKERS,
+        "max_starts_per_tick": DEFAULT_MAX_STARTS_PER_TICK,
+        "default_monitor_mode": "active",
+    }
+    gpu = {
+        "default_gpu_count": DEFAULT_GPU_COUNT,
+        "lock_dir": DEFAULT_GPU_LOCK_DIR,
+        "lock_file_template": DEFAULT_GPU_LOCK_FILE_TEMPLATE,
+    }
+    loops = {
+        "orchestrator_interval_minutes": DEFAULT_ORCHESTRATOR_LOOP_INTERVAL_MINUTES,
+        "monitor_interval_minutes": DEFAULT_MONITOR_LOOP_INTERVAL_MINUTES,
+    }
     return json.dumps(
         {
+            "schema": "autokaggle-control-v2-config",
+            "paths": {
+                "remote_root": args.remote_root,
+                "sol_root": args.sol_root,
+                "tmux_session": args.tmux_session,
+            },
+            "roles": roles,
+            "scheduler": scheduler,
+            "gpu": gpu,
+            "loops": loops,
+            "phase_recipe": DEFAULT_PHASE_RECIPE,
+            "skills": {
+                "version": args.skill_version,
+                "kernelwiki_source": DEFAULT_KERNELWIKI_SOURCE,
+                "ncu_source": DEFAULT_NCU_SOURCE,
+            },
+            "telemetry": {
+                "enabled": False,
+                "endpoint": "http://127.0.0.1:4318",
+                "protocol": "http/json",
+            },
+            # Backward-compatible aliases for older scripts and hand-written configs.
             "remote_root": args.remote_root,
             "sol_root": args.sol_root,
             "tmux_session": args.tmux_session,
-            "worker_model": "sonnet",
-            "monitor_model": "sonnet",
+            "worker_model": DEFAULT_WORKER_MODEL,
+            "orchestrator_model": DEFAULT_ORCHESTRATOR_MODEL,
+            "monitor_model": DEFAULT_MONITOR_MODEL,
+            "local_advisor": DEFAULT_LOCAL_ADVISOR_RUNNER,
             "max_active_workers": DEFAULT_MAX_ACTIVE_WORKERS,
             "max_per_gpu_workers": DEFAULT_MAX_PER_GPU_WORKERS,
             "max_starts_per_tick": DEFAULT_MAX_STARTS_PER_TICK,
             "monitor_loop_interval_minutes": DEFAULT_MONITOR_LOOP_INTERVAL_MINUTES,
             "orchestrator_loop_interval_minutes": DEFAULT_ORCHESTRATOR_LOOP_INTERVAL_MINUTES,
+            "gpu_lock_dir": DEFAULT_GPU_LOCK_DIR,
         },
         indent=2,
     ) + "\n"

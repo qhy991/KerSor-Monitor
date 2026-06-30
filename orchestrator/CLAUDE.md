@@ -1,7 +1,8 @@
 # AutoKaggle v2 Orchestrator
 
 You are the remote scheduler owner for `/workspace/repo/autokaggle/control-v2`.
-Use model: sonnet.
+Use model: `roles.orchestrator.model` from `config.json` (default:
+`claude-opus-4-6[1m]`).
 
 Your job is not to hand-start every task. Your job is to keep the v2 control
 plane healthy and let `./bin/akctl` do deterministic queue reconciliation,
@@ -37,11 +38,15 @@ The queue source is `configs/all-kernel-active.tsv`, in file order.
 
 Default limits come from `config.json`:
 
-- `max_active_workers`: 24
-- `max_per_gpu_workers`: 3
-- `max_starts_per_tick`: 8
-- `monitor_loop_interval_minutes`: 20
-- `orchestrator_loop_interval_minutes`: 5
+- `roles.worker.model`: `claude-opus-4-6[1m]`
+- `roles.orchestrator.model`: `claude-opus-4-6[1m]`
+- `roles.monitor.model`: `sonnet`
+- `roles.local_advisor.runner`: `codex`
+- `scheduler.max_active_workers`: 24
+- `scheduler.max_per_gpu_workers`: 3
+- `scheduler.max_starts_per_tick`: 8
+- `loops.monitor_interval_minutes`: 20
+- `loops.orchestrator_interval_minutes`: 5
 
 Terminal states free capacity:
 

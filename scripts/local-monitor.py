@@ -436,7 +436,7 @@ def run_actuate_worker(args: argparse.Namespace) -> int:
 
 def run_loop(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    interval = args.interval
+    interval = args.interval if args.interval is not None else int(config.get("local_loop_interval_seconds", 300))
     base_token = ""
     table_id = ""
     if args.write:
@@ -536,7 +536,7 @@ def build_parser() -> argparse.ArgumentParser:
     observe.add_argument("--output", help="Write observation JSON to this path instead of stdout.")
     observe.set_defaults(func=run_observe_worker)
 
-    prompt = subparsers.add_parser("verdict-prompt", help="Build the strict JSON prompt for a sonnet monitor.")
+    prompt = subparsers.add_parser("verdict-prompt", help="Build the strict JSON prompt for the configured monitor model.")
     prompt.add_argument("observation", help="Observation JSON file.")
     prompt.add_argument("--output", help="Write prompt to this path instead of stdout.")
     prompt.set_defaults(func=run_verdict_prompt)
@@ -551,7 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     loop = subparsers.add_parser("loop", help="Repeat snapshot/sync on an interval.")
     add_config_arg(loop)
-    loop.add_argument("--interval", type=int, default=300, help="Seconds between snapshots.")
+    loop.add_argument("--interval", type=int, help="Seconds between snapshots. Default comes from config.")
     loop.add_argument("--write", action="store_true", help="Write to Feishu each iteration. Default is dry-run.")
     loop.add_argument("--once", action="store_true", help="Run one iteration, useful for smoke tests.")
     loop.set_defaults(func=run_loop)

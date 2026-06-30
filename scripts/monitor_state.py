@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import shlex
 import subprocess
@@ -18,6 +19,8 @@ import yaml
 INFRA_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_TMUX_SESSION = "kda"
 DEFAULT_ORCHESTRATOR_WINDOW = "orchestrator"
+DEFAULT_LOCAL_ADVISOR = "codex"
+DEFAULT_LOCAL_LOOP_INTERVAL_SECONDS = 300
 DEFAULT_MONITOR_MODEL = "sonnet"
 DEFAULT_MONITOR_MODE = "shadow"
 DEFAULT_PHASE_RECIPE = {"phase1": 1, "phase2": 3, "phase3": 3}
@@ -624,6 +627,8 @@ def load_config(config_path: str | Path) -> dict[str, Any]:
     data["feishu"].setdefault("table_id", data.get("table_id", ""))
     if not isinstance(data.get("ssh_options"), list):
         data["ssh_options"] = list(DEFAULT_SSH_OPTIONS)
+    data.setdefault("local_advisor", DEFAULT_LOCAL_ADVISOR)
+    data.setdefault("local_loop_interval_seconds", DEFAULT_LOCAL_LOOP_INTERVAL_SECONDS)
     data.setdefault("monitor_model", DEFAULT_MONITOR_MODEL)
     data.setdefault("monitor_mode", DEFAULT_MONITOR_MODE)
     data.setdefault("gpu_lock_dir", DEFAULT_GPU_LOCK_DIR)
@@ -1603,9 +1608,32 @@ def normalize_monitor_verdict(verdict: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_tmux_pane_send_command(config: dict[str, Any], pane_id: str, message: str) -> list[str]:
-    remote_cmd = "tmux send-keys -t {target} {message} Enter".format(
+    encoded_message = base64.b64encode(message.encode("utf-8")).decode("ascii")
+    # Use paste-buffer for the message so tmux never interprets nudge text as
+    # key names such as Enter, C-c, Space, or Tab. Submit with a separate Enter.
+    script = (
+        "import base64, os, subprocess, sys, tempfile, time\n"
+        "pane_id = sys.argv[1]\n"
+        "message = base64.b64decode(sys.argv[2]).decode('utf-8')\n"
+        "buffer_name = 'local-monitor-nudge-' + str(os.getpid())\n"
+        "fd, path = tempfile.mkstemp(prefix='local-monitor-nudge-', text=True)\n"
+        "try:\n"
+        "    with os.fdopen(fd, 'w', encoding='utf-8') as handle:\n"
+        "        handle.write(message)\n"
+        "    subprocess.run(['tmux', 'load-buffer', '-b', buffer_name, path], check=True)\n"
+        "    subprocess.run(['tmux', 'paste-buffer', '-d', '-b', buffer_name, '-t', pane_id], check=True)\n"
+        "    time.sleep(0.1)\n"
+        "    subprocess.run(['tmux', 'send-keys', '-t', pane_id, 'Enter'], check=True)\n"
+        "finally:\n"
+        "    try:\n"
+        "        os.unlink(path)\n"
+        "    except FileNotFoundError:\n"
+        "        pass\n"
+    )
+    remote_cmd = "python3 -c {script} {target} {payload}".format(
+        script=shlex.quote(script),
         target=shlex.quote(pane_id),
-        message=shlex.quote(message),
+        payload=shlex.quote(encoded_message),
     )
     return [*ssh_command_prefix(config), remote_cmd]
 

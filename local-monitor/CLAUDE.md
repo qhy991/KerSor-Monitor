@@ -18,6 +18,8 @@ and send only high-level control messages to the remote orchestrator.
 - Do not write Feishu unless the user or command explicitly requested `--write`.
 - Do not send worker nudges unless the worker monitor mode is `active`.
 - When nudging a worker, target the tmux `pane_id`, not a session/window name.
+  Paste nudge text with `tmux paste-buffer`, then submit with a separate Enter;
+  do not pass the message itself to `tmux send-keys`.
 - Do not send worker nudges to imported legacy workers. Legacy sources are
   read-only visibility inputs, never control targets.
 
@@ -36,7 +38,7 @@ python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml 
 python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --write
 python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml patrol
 python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml start FI-002
-python3 scripts/local-monitor.py loop --config config/local-monitor.yaml --interval 300
+python3 scripts/local-monitor.py loop --config config/local-monitor.yaml
 python3 scripts/local-monitor.py observe-worker FI-002 --config config/local-monitor.yaml --pane-id %20 --gpu-uuid GPU-... --gpu-index 7 --gpu-slot 2 --output observation.json
 python3 scripts/local-monitor.py verdict-prompt observation.json --output verdict.prompt.txt
 python3 scripts/local-monitor.py actuate-worker --config config/local-monitor.yaml --observation observation.json --verdict verdict.json --mode active --send
@@ -100,7 +102,7 @@ non-empty `nudge` and the monitor mode is `active`.
 
 ## Worker Observation Contract
 
-Worker monitoring is deterministic collection first, then sonnet judgment. The
+Worker monitoring is deterministic collection first, then configured sonnet judgment. The
 collector reads remote state and writes compact observation JSON with:
 
 - tmux pane metadata: `session_name`, `session_id`, `window_id`, `window_name`,
@@ -152,7 +154,8 @@ checks.
 
 ## Sonnet Verdict Contract
 
-All worker monitor judgment uses `sonnet`. The verdict must be strict JSON:
+All worker monitor judgment uses `monitor_model` from `config/local-monitor.yaml`
+(default: `sonnet`). The verdict must be strict JSON:
 
 ```json
 {
@@ -167,7 +170,9 @@ All worker monitor judgment uses `sonnet`. The verdict must be strict JSON:
 
 The monitor enforces the recipe `1x phase1 + 3x phase2 + 3x phase3`. It does
 not invent optimization directions. On repeated phase2/phase3 passes, nudge the
-worker to generate the next draft or plan from previous results.
+worker to generate the next draft or plan from previous results. Nudge text is
+pasted through a tmux buffer, then submitted with a separate Enter, so message
+content is never interpreted as tmux key names.
 
 Only v2-owned workers can be nudged:
 

@@ -88,6 +88,19 @@ Each tick starts at most 8 new workers, keeps no more than 24 active workers
 globally, and keeps no more than 3 active workers per GPU. Per-worker monitors
 run their own Claude Code `/loop` every 20 minutes.
 
+Remote defaults are generated into `control-v2/config.json`. Change that file
+to tune role models, queue path, worker capacity, GPU lock naming, loop
+intervals, phase recipe, skill sources, and telemetry defaults. CLI flags such
+as `--max-active`, `--max-per-gpu`, `--max-starts-per-tick`,
+`--monitor-mode`, and `--interval-minutes` remain one-off overrides.
+
+Default role models:
+
+- worker: Claude `claude-opus-4-6[1m]`
+- orchestrator: Claude `claude-opus-4-6[1m]`
+- monitor: Claude `sonnet`
+- local advisor: Codex, recorded as a local convention only
+
 ### `/local-monitor` — Local control plane and Feishu sync
 
 ```bash
@@ -132,11 +145,11 @@ gitignored because payloads can contain account or session metadata.
 - **Worker registry**: Every worker records `session_name`, `session_id`, `window_id`, `pane_id`, `pane_pid`, cwd, assigned GPU UUID/index/slot, phase recipe, and monitor mode
 - **Orchestrator**: Runs on the GPU server, schedules workers, starts per-worker monitors, and keeps `orchestrator/state.json` current
 - **Skill hub**: `skill_hub/manifest.yaml` records required project-local skill versions; new workspaces symlink `.claude/skills/*` and `.codex/skills/*` into `skill_hub/active/*`
-- **Local monitor**: Runs on the user's Mac, reads remote state over SSH, sends `[local-monitor] ...` requests to the orchestrator, generates sonnet worker verdict prompts, nudges worker panes only in active mode, and syncs Feishu
+- **Local monitor**: Runs on the user's Mac, reads remote state over SSH, sends `[local-monitor] ...` requests to the orchestrator, generates sonnet worker verdict prompts, records Codex as the local advisor convention, nudges worker panes only in active mode, and syncs Feishu
 - **Legacy importer**: Existing `/workspace/repo/autokaggle` monitor state can be imported read-only from `tasks.json`, `monitor/state/bindings.tsv`, tmux panes, and dashboard artifacts. Imported workers are marked `managed_by=legacy` and `read_only=true`.
-- **Actuator boundary**: `tmux send-keys -t <pane_id>` is allowed only for workers marked `managed_by=v2` and `read_only=false`. Legacy panes are visible but never controlled by the new local monitor.
+- **Actuator boundary**: Worker nudges are pasted into the registered `pane_id` with `tmux paste-buffer`, then submitted with a separate Enter, and only for workers marked `managed_by=v2` and `read_only=false`. Legacy panes are visible but never controlled by the new local monitor.
 - **GPU serialization**: Each GPU UUID has a shared lock file such as `/tmp/autokaggle-gpu-GPU-....lock`; multiple workers may share one GPU but only one GPU-bound section should hold the lock
-- **Communication**: `tmux capture-pane` (observe) + `tmux send-keys -t <pane_id>` (nudge) + `status.json` and worker registry (structured state)
+- **Communication**: `tmux capture-pane` (observe) + `tmux paste-buffer` plus separate Enter (nudge) + `status.json` and worker registry (structured state)
 - **Dashboard**: Feishu Bitable is a mirror written by the local monitor; local HTML remains optional
 - **Concurrency**: CPU/LLM work can run concurrently; use 3-4 worker slots per GPU UUID and enforce GPU mutual exclusion with the lock wrapper
 - **Telemetry**: Optional OpenTelemetry capture runs as a side channel. It is off by default and only applies to new workers started with `KDA_OTEL_ENABLED=1`.
@@ -163,6 +176,7 @@ gitignored because payloads can contain account or session metadata.
 cp config/local-monitor.yaml.example config/local-monitor.yaml
 # For H100-lsh autokaggle, remote_root is /workspace/repo/autokaggle.
 # Keep monitor_model: sonnet and monitor_mode: shadow until inspected.
+# local_advisor: codex records the local operator convention; it does not auto-launch Codex.
 
 # 4. Check local Feishu auth before live writes
 lark-cli doctor --offline
