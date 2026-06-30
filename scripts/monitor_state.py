@@ -38,8 +38,10 @@ DEFAULT_TELEMETRY_CONFIG = {
 }
 LEGACY_AUTOKAGGLE_KIND = "autokaggle_legacy"
 FEISHU_LATENCY_PRECISION = 4
-FEISHU_ROW_FIELDS = ("Task ID", "Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated")
-FEISHU_WRITABLE_FIELDS = ("Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated")
+FEISHU_LATENCY_FIELD = "Latency (ms)"
+FEISHU_ROW_FIELDS = ("Task ID", "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated")
+FEISHU_WRITABLE_FIELDS = ("Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated")
+FEISHU_METRIC_FIELDS = ("Speedup", FEISHU_LATENCY_FIELD, "MFU")
 FEISHU_STATUS_OPTION_ORDER = (
     "no_workspace",
     "pending",
@@ -105,7 +107,7 @@ FEISHU_INIT_FIELD_DEFINITIONS = (
     {"type": "number", "name": "Round", "style": {"type": "plain", "precision": 0}},
     {"type": "number", "name": "Candidates", "style": {"type": "plain", "precision": 0}},
     {"type": "number", "name": "Speedup", "style": {"type": "plain", "precision": 4}},
-    {"type": "number", "name": "Latency", "style": {"type": "plain", "precision": FEISHU_LATENCY_PRECISION}},
+    {"type": "number", "name": FEISHU_LATENCY_FIELD, "style": {"type": "plain", "precision": FEISHU_LATENCY_PRECISION}},
     {"type": "number", "name": "MFU", "style": {"type": "plain", "precision": 4}},
     {"type": "datetime", "name": "Updated", "style": {"format": "yyyy-MM-dd HH:mm"}},
 )
@@ -1955,7 +1957,7 @@ def build_feishu_rows(snapshot: dict[str, Any], task_filter: str | None = None) 
                 "Round": task.get("rounds", 0),
                 "Candidates": task.get("candidates", 0),
                 "Speedup": normalize_feishu_speedup(task.get("speedup")),
-                "Latency": normalize_feishu_number(task.get("latency"), precision=FEISHU_LATENCY_PRECISION),
+                FEISHU_LATENCY_FIELD: normalize_feishu_number(task.get("latency"), precision=FEISHU_LATENCY_PRECISION),
                 "MFU": normalize_feishu_number(task.get("mfu"), precision=4),
                 "Updated": normalize_feishu_datetime(task.get("updated") or now),
                 "_raw_status": task["status"],
@@ -2019,7 +2021,7 @@ def merge_legacy_feishu_rows(
         if existing:
             existing_status = str(existing.get("_raw_status") or existing.get("Status") or "")
             if existing_status not in replaceable_primary_statuses:
-                for metric_name in ("Speedup", "Latency", "MFU"):
+                for metric_name in FEISHU_METRIC_FIELDS:
                     if existing.get(metric_name) in (None, "") and row.get(metric_name) not in (None, ""):
                         existing[metric_name] = row[metric_name]
                 continue
@@ -2041,7 +2043,7 @@ def build_initial_record_payload(row: dict[str, Any]) -> dict[str, Any]:
 def normalize_feishu_payload_value(field: str, value: Any) -> Any:
     if field == "Speedup":
         return normalize_feishu_speedup(value)
-    if field == "Latency":
+    if field == FEISHU_LATENCY_FIELD:
         return normalize_feishu_number(value, precision=FEISHU_LATENCY_PRECISION)
     if field == "MFU":
         return normalize_feishu_number(value, precision=4)
@@ -2357,7 +2359,7 @@ def feishu_schema_diagnostics(rows: list[dict[str, Any]], field_payload: dict[st
     numeric_fields = {
         name
         for name, field in fields.items()
-        if field.get("type") == "number" and name in {"Round", "Candidates", "Speedup", "Latency", "MFU"}
+        if field.get("type") == "number" and name in {"Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU"}
     }
     for row in rows[:20]:
         for name in numeric_fields:
@@ -2523,7 +2525,7 @@ def print_snapshot_table(snapshot: dict[str, Any]) -> None:
         for error in errors:
             print(f"  - {error}")
     print()
-    print(f"{'Task ID':<10} {'Status':<14} {'Round':>5} {'Cand':>5} {'Speedup':>8} {'Latency':>10} {'MFU':>8} Updated")
+    print(f"{'Task ID':<10} {'Status':<14} {'Round':>5} {'Cand':>5} {'Speedup':>8} {'Latency(ms)':>11} {'MFU':>8} Updated")
     print("-" * 94)
     for task in snapshot.get("tasks", []):
         print(

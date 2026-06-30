@@ -67,7 +67,7 @@ Each task is mapped to the existing Feishu row fields:
 - `Round`
 - `Candidates`
 - `Speedup`
-- `Latency`
+- `Latency (ms)`
 - `MFU`
 - `Updated`
 
