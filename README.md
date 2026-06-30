@@ -151,7 +151,7 @@ gitignored because payloads can contain account or session metadata.
 - **Actuator boundary**: Worker nudges are pasted into the registered `pane_id` with `tmux paste-buffer`, then submitted with a separate Enter, and only for workers marked `managed_by=v2` and `read_only=false`. Legacy panes are visible but never controlled by the new local monitor.
 - **GPU serialization**: Each GPU UUID has a shared lock file such as `/tmp/autokaggle-gpu-GPU-....lock`; multiple workers may share one GPU but only one GPU-bound section should hold the lock
 - **Communication**: `tmux capture-pane` (observe) + `tmux paste-buffer` plus separate Enter (nudge) + `status.json` and worker registry (structured state)
-- **Dashboard**: Feishu Bitable is a mirror written by the local monitor; local HTML remains optional
+- **Dashboard**: Feishu Bitable is a mirror written by the local monitor; `Task ID` stays as the stable sync key and `Task Name` carries the readable operator name. Local HTML remains optional
 - **Concurrency**: CPU/LLM work can run concurrently; use 3-4 worker slots per GPU UUID and enforce GPU mutual exclusion with the lock wrapper
 - **Telemetry**: Optional OpenTelemetry capture runs as a side channel. It is off by default and only applies to new workers started with `KDA_OTEL_ENABLED=1`.
 

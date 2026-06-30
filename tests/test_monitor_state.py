@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from monitor_state import (  # noqa: E402
     FEISHU_LATENCY_FIELD,
+    FEISHU_TASK_NAME_FIELD,
     FEISHU_STATUS_OPTIONS,
     build_monitor_actuation,
     build_feishu_rows,
@@ -141,6 +142,7 @@ class MonitorStateTests(unittest.TestCase):
         rows = build_feishu_rows(build_local_snapshot(root), task_filter="FI-002")
 
         self.assertEqual(format_speedup(1.234), "1.23x")
+        self.assertEqual(rows[0][FEISHU_TASK_NAME_FIELD], "fused_add_rmsnorm_h4096")
         self.assertEqual(rows[0]["Speedup"], 1.234)
         self.assertEqual(rows[0][FEISHU_LATENCY_FIELD], 0.0102)
         self.assertEqual(rows[0]["MFU"], 0.42)
@@ -193,6 +195,7 @@ class MonitorStateTests(unittest.TestCase):
         primary_rows = [
             {
                 "Task ID": "FI-002",
+                FEISHU_TASK_NAME_FIELD: "fused_add_rmsnorm_h4096",
                 "Status": "no_workspace",
                 "Round": 0,
                 "Candidates": 0,
@@ -204,6 +207,7 @@ class MonitorStateTests(unittest.TestCase):
             },
             {
                 "Task ID": "L1-003",
+                FEISHU_TASK_NAME_FIELD: "lm_head_projection_with_logit_slicing",
                 "Status": "running",
                 "Round": 1,
                 "Candidates": 2,
@@ -217,6 +221,7 @@ class MonitorStateTests(unittest.TestCase):
         legacy_rows = [
             {
                 "Task ID": "002",
+                FEISHU_TASK_NAME_FIELD: "002_fused_add_rmsnorm_h4096",
                 "Status": "legacy_running",
                 "Round": 0,
                 "Candidates": 21,
@@ -228,6 +233,7 @@ class MonitorStateTests(unittest.TestCase):
             },
             {
                 "Task ID": "L1-003",
+                FEISHU_TASK_NAME_FIELD: "legacy_l1_name",
                 "Status": "legacy_done",
                 "Round": 0,
                 "Candidates": 9,
@@ -244,12 +250,14 @@ class MonitorStateTests(unittest.TestCase):
         self.assertEqual(canonical_legacy_feishu_task_id("002", {"FI-002": "FI-002"}), "FI-002")
         by_id = {row["Task ID"]: row for row in merged}
         self.assertEqual(by_id["FI-002"]["Status"], "legacy_running")
+        self.assertEqual(by_id["FI-002"][FEISHU_TASK_NAME_FIELD], "fused_add_rmsnorm_h4096")
         self.assertEqual(by_id["FI-002"]["Candidates"], 21)
         self.assertEqual(by_id["FI-002"]["Speedup"], 1.018)
         self.assertEqual(by_id["FI-002"][FEISHU_LATENCY_FIELD], 0.0102)
         self.assertEqual(by_id["FI-002"]["MFU"], 0.51)
         self.assertEqual(by_id["FI-002"]["_legacy_task_id"], "002")
         self.assertEqual(by_id["L1-003"]["Status"], "running")
+        self.assertEqual(by_id["L1-003"][FEISHU_TASK_NAME_FIELD], "lm_head_projection_with_logit_slicing")
         self.assertEqual(by_id["L1-003"][FEISHU_LATENCY_FIELD], 0.2)
         self.assertEqual(merge_legacy_feishu_rows(primary_rows, legacy_rows, task_filter="002")[0]["Task ID"], "FI-002")
 
@@ -272,7 +280,10 @@ class MonitorStateTests(unittest.TestCase):
 
         field_payload = {"data": {"fields": [{"name": "Task ID", "type": "text"}]}}
         missing = missing_feishu_init_field_definitions(field_payload)
-        self.assertEqual([field["name"] for field in missing], ["Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated"])
+        self.assertEqual(
+            [field["name"] for field in missing],
+            [FEISHU_TASK_NAME_FIELD, "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated"],
+        )
         latency_field = next(field for field in missing if field["name"] == FEISHU_LATENCY_FIELD)
         self.assertEqual(latency_field["style"]["precision"], 4)
         status_field = next(field for field in missing if field["name"] == "Status")
@@ -322,6 +333,7 @@ class MonitorStateTests(unittest.TestCase):
         rows = [
             {
                 "Task ID": "L1-011",
+                FEISHU_TASK_NAME_FIELD: "rotary_position_embedding",
                 "Status": "running",
                 "Round": 0,
                 "Candidates": 0,
@@ -335,12 +347,19 @@ class MonitorStateTests(unittest.TestCase):
         payload = json.loads(create_cmd[-1])
 
         self.assertEqual(create_cmd[:5], ["lark-cli", "--as", "user", "base", "+record-batch-create"])
-        self.assertEqual(payload["fields"], ["Task ID", "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated"])
-        self.assertEqual(payload["rows"][0], ["L1-011", "running", 0, 0, None, 0.0102, None, "2026-06-29 12:00:00"])
+        self.assertEqual(
+            payload["fields"],
+            ["Task ID", FEISHU_TASK_NAME_FIELD, "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated"],
+        )
+        self.assertEqual(
+            payload["rows"][0],
+            ["L1-011", "rotary_position_embedding", "running", 0, 0, None, 0.0102, None, "2026-06-29 12:00:00"],
+        )
 
     def test_feishu_command_uses_user_identity_and_expected_payload(self) -> None:
         row = {
             "Task ID": "FI-002",
+            FEISHU_TASK_NAME_FIELD: "fused_add_rmsnorm_h4096",
             "Status": "running",
             "Round": 1,
             "Candidates": 2,
@@ -355,6 +374,7 @@ class MonitorStateTests(unittest.TestCase):
         self.assertIn("--record-id", cmd)
         payload = json.loads(cmd[-1])
         self.assertNotIn("Task ID", payload)
+        self.assertEqual(payload[FEISHU_TASK_NAME_FIELD], "fused_add_rmsnorm_h4096")
         self.assertEqual(payload["Status"], "running")
         self.assertEqual(payload[FEISHU_LATENCY_FIELD], 0.1)
 
@@ -362,6 +382,7 @@ class MonitorStateTests(unittest.TestCase):
         rows = [
             {
                 "Task ID": "L1-003",
+                FEISHU_TASK_NAME_FIELD: "lm_head_projection_with_logit_slicing",
                 "Status": "phase1_complete",
                 "Round": 0,
                 "Candidates": 0,
@@ -376,6 +397,7 @@ class MonitorStateTests(unittest.TestCase):
             "data": {
                 "fields": [
                     {"name": "Task ID", "type": "text"},
+                    {"name": FEISHU_TASK_NAME_FIELD, "type": "text"},
                     {"name": "Status", "type": "select", "options": [{"name": "running"}]},
                     {"name": "Round", "type": "number"},
                     {"name": "Candidates", "type": "number"},

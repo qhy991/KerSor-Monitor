@@ -37,10 +37,30 @@ DEFAULT_TELEMETRY_CONFIG = {
     "protocol": "http/json",
 }
 LEGACY_AUTOKAGGLE_KIND = "autokaggle_legacy"
+FEISHU_TASK_NAME_FIELD = "Task Name"
 FEISHU_LATENCY_PRECISION = 4
 FEISHU_LATENCY_FIELD = "Latency (ms)"
-FEISHU_ROW_FIELDS = ("Task ID", "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated")
-FEISHU_WRITABLE_FIELDS = ("Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated")
+FEISHU_ROW_FIELDS = (
+    "Task ID",
+    FEISHU_TASK_NAME_FIELD,
+    "Status",
+    "Round",
+    "Candidates",
+    "Speedup",
+    FEISHU_LATENCY_FIELD,
+    "MFU",
+    "Updated",
+)
+FEISHU_WRITABLE_FIELDS = (
+    FEISHU_TASK_NAME_FIELD,
+    "Status",
+    "Round",
+    "Candidates",
+    "Speedup",
+    FEISHU_LATENCY_FIELD,
+    "MFU",
+    "Updated",
+)
 FEISHU_METRIC_FIELDS = ("Speedup", FEISHU_LATENCY_FIELD, "MFU")
 FEISHU_STATUS_OPTION_ORDER = (
     "no_workspace",
@@ -105,6 +125,7 @@ FEISHU_STATUS_OPTION_HUES = {
 }
 FEISHU_INIT_FIELD_DEFINITIONS = (
     {"type": "text", "name": "Task ID"},
+    {"type": "text", "name": FEISHU_TASK_NAME_FIELD},
     {
         "type": "select",
         "name": "Status",
@@ -1963,6 +1984,7 @@ def build_feishu_rows(snapshot: dict[str, Any], task_filter: str | None = None) 
         rows.append(
             {
                 "Task ID": task["id"],
+                FEISHU_TASK_NAME_FIELD: task.get("name", ""),
                 "Status": normalize_feishu_status(task["status"]),
                 "Round": task.get("rounds", 0),
                 "Candidates": task.get("candidates", 0),
@@ -2029,6 +2051,10 @@ def merge_legacy_feishu_rows(
         row["_legacy_task_id"] = legacy_task_id
         existing = merged.get(key)
         if existing:
+            if existing.get(FEISHU_TASK_NAME_FIELD) and not row.get(FEISHU_TASK_NAME_FIELD):
+                row[FEISHU_TASK_NAME_FIELD] = existing[FEISHU_TASK_NAME_FIELD]
+            elif existing.get(FEISHU_TASK_NAME_FIELD) and str(row.get(FEISHU_TASK_NAME_FIELD, "")).startswith(f"{legacy_task_id}_"):
+                row[FEISHU_TASK_NAME_FIELD] = existing[FEISHU_TASK_NAME_FIELD]
             existing_status = str(existing.get("_raw_status") or existing.get("Status") or "")
             if existing_status not in replaceable_primary_statuses:
                 for metric_name in FEISHU_METRIC_FIELDS:

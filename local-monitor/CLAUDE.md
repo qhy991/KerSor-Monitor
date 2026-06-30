@@ -63,6 +63,7 @@ Every snapshot has:
 Each task is mapped to the existing Feishu row fields:
 
 - `Task ID`
+- `Task Name`
 - `Status`
 - `Round`
 - `Candidates`
