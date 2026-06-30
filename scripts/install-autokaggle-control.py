@@ -312,6 +312,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -760,11 +761,105 @@ def start_window(window: str, command: str, *, cwd: Path = CONTROL_DIR) -> dict:
     return parse_identity(row)
 
 
+def capture_pane(pane_id: str, *, lines: int = 120) -> str:
+    result = run(["tmux", "capture-pane", "-pt", pane_id, "-S", f"-{lines}"], check=False)
+    return result.stdout if result.returncode == 0 else result.stderr
+
+
+def claude_blocker(capture: str) -> str | None:
+    checks = [
+        ("trust_prompt", ("Quick safety check", "I trust this folder")),
+        ("login_required", ("Please run /login", "401")),
+        ("usage_limit", ("Stop and wait for limit to reset", "Switch to usage credits", "Upgrade your plan")),
+        ("schedule_confirmation", ("This session only", "Create cloud schedule", "Enter to confirm")),
+    ]
+    for name, needles in checks:
+        if any(needle in capture for needle in needles):
+            return name
+    return None
+
+
+def wait_for_claude_ready(pane_id: str, *, timeout: int = 30) -> dict:
+    deadline = time.time() + timeout
+    last_capture = ""
+    while time.time() < deadline:
+        last_capture = capture_pane(pane_id, lines=80)
+        blocker = claude_blocker(last_capture)
+        if blocker:
+            return {"ok": False, "status": "blocked", "reason": blocker}
+        has_prompt = "\u276f" in last_capture
+        has_footer = "bypass permissions" in last_capture or "shift+tab" in last_capture
+        is_busy = "esc to interrupt" in "\n".join(last_capture.splitlines()[-6:])
+        if has_prompt and has_footer and not is_busy:
+            return {"ok": True, "status": "ready"}
+        time.sleep(0.5)
+    return {"ok": False, "status": "timeout", "reason": "claude_ready_timeout"}
+
+
 def send_pane_text(pane_id: str, text: str) -> None:
     if not pane_id:
         raise RuntimeError("missing pane_id for tmux send-keys")
-    run(["tmux", "send-keys", "-t", pane_id, "-l", text])
+    buffer_name = f"akctl-{os.getpid()}-{int(time.time() * 1000)}"
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as tmp:
+            tmp.write(text)
+            tmp_path = tmp.name
+        run(["tmux", "load-buffer", "-b", buffer_name, tmp_path])
+        run(["tmux", "paste-buffer", "-d", "-b", buffer_name, "-t", pane_id])
+    finally:
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
     run(["tmux", "send-keys", "-t", pane_id, "Enter"])
+
+
+def wait_for_loop_submission(pane_id: str, *, timeout: int = 20, retry_enter: bool = True) -> dict:
+    deadline = time.time() + timeout
+    retry_after = time.time() + 3
+    retried = False
+    last_capture = ""
+    while time.time() < deadline:
+        last_capture = capture_pane(pane_id, lines=160)
+        if any(marker in last_capture for marker in ("CronCreate", "Scheduled", "Iteration", "Next iteration")):
+            return {"status": "running", "checked_at": now_iso(), "retried_enter": retried}
+        blocker = claude_blocker(last_capture)
+        if blocker:
+            return {"status": "blocked", "reason": blocker, "checked_at": now_iso(), "retried_enter": retried}
+        tail = "\n".join(last_capture.splitlines()[-12:])
+        command_visible = "/loop every" in last_capture
+        input_idle = "\u276f" in tail and "esc to interrupt" not in tail
+        if retry_enter and not retried and time.time() >= retry_after and command_visible and input_idle:
+            run(["tmux", "send-keys", "-t", pane_id, "Enter"])
+            retried = True
+            deadline = time.time() + timeout
+        time.sleep(0.5)
+    if "/loop every" in last_capture and "esc to interrupt" not in "\n".join(last_capture.splitlines()[-12:]):
+        status = "stuck_input"
+    elif "esc to interrupt" in last_capture or "Thought" in last_capture or "Roosting" in last_capture:
+        status = "submitted_unconfirmed"
+    else:
+        status = "unknown"
+    return {"status": status, "checked_at": now_iso(), "retried_enter": retried}
+
+
+def submit_claude_loop(pane_id: str, prompt: str, *, ready_timeout: int = 30) -> dict:
+    ready = wait_for_claude_ready(pane_id, timeout=ready_timeout)
+    result = {
+        "engine": "claude-code-/loop",
+        "status": ready["status"],
+        "ready": ready,
+        "prompt_sent_at": None,
+        "checked_at": now_iso(),
+    }
+    if not ready.get("ok"):
+        return result
+    send_pane_text(pane_id, prompt)
+    result["prompt_sent_at"] = now_iso()
+    submission = wait_for_loop_submission(pane_id)
+    result["status"] = submission["status"]
+    result["submission"] = submission
+    result["checked_at"] = now_iso()
+    return result
 
 
 def monitor_loop_interval_minutes() -> int:
@@ -904,13 +999,15 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
         monitor_cmd = f"claude --model sonnet --permission-mode bypassPermissions --name {sh(monitor_window)}; bash"
     monitor_identity = start_window(monitor_window, monitor_cmd)
     if not smoke:
-        send_pane_text(str(monitor_identity.get("pane_id") or ""), monitor_loop_prompt(task["id"], args.monitor_mode))
+        loop_info = submit_claude_loop(str(monitor_identity.get("pane_id") or ""), monitor_loop_prompt(task["id"], args.monitor_mode))
+    else:
+        loop_info = {}
     registry = load_registry()
     registry["tasks"][task["id"]]["monitor"]["worker"] = monitor_identity
     registry["tasks"][task["id"]]["monitor"]["loop"] = {
         "engine": "claude-code-/loop",
         "interval_minutes": monitor_loop_interval_minutes(),
-        "prompt_sent_at": now_iso(),
+        **loop_info,
     }
     write_registry(registry)
     return registry["tasks"][task["id"]]
@@ -932,11 +1029,11 @@ def start_monitor_loop(task_id: str, *, force: bool = False, retime: bool = Fals
         raise RuntimeError(f"monitor pane_id missing for task: {task_id}")
     mode = str(monitor.get("mode") or "shadow")
     prompt = monitor_loop_retime_prompt(task_id, mode, interval_minutes) if retime else monitor_loop_prompt(task_id, mode, interval_minutes)
-    send_pane_text(pane_id, prompt)
+    loop_info = submit_claude_loop(pane_id, prompt)
     monitor["loop"] = {
         "engine": "claude-code-/loop",
         "interval_minutes": interval_minutes or monitor_loop_interval_minutes(),
-        "prompt_sent_at": now_iso(),
+        **loop_info,
     }
     registry["tasks"][task_id]["monitor"] = monitor
     write_registry(registry)
@@ -1138,7 +1235,7 @@ def run_loop(args: argparse.Namespace) -> int:
         max_starts_per_tick=max_starts,
         monitor_mode=monitor_mode,
     )
-    send_pane_text(str(identity.get("pane_id") or ""), prompt)
+    loop_info = submit_claude_loop(str(identity.get("pane_id") or ""), prompt)
     registry = load_registry()
     registry.setdefault("orchestrator", {}).setdefault("worker", identity)
     registry["orchestrator"]["loop"] = {
@@ -1149,7 +1246,7 @@ def run_loop(args: argparse.Namespace) -> int:
         "max_per_gpu": max_per_gpu,
         "max_starts_per_tick": max_starts,
         "monitor_mode": monitor_mode,
-        "prompt_sent_at": now_iso(),
+        **loop_info,
     }
     write_registry(registry)
     print(json.dumps({"ok": True, "orchestrator": registry["orchestrator"]}, indent=2))
