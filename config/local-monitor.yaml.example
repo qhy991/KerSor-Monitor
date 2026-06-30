@@ -1,0 +1,58 @@
+# Local Monitor configuration.
+#
+# Copy this file to config/local-monitor.yaml and fill the remote_root for the
+# target machine. The real config file is gitignored because host/path choices
+# are local deployment state.
+
+ssh_host: H100-lsh
+remote_root: /workspace/repo/autokaggle
+tmux_session: kda
+orchestrator_window: orchestrator
+ssh_options: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+
+# All worker monitor verdicts should be made by sonnet. Keep shadow until you
+# have inspected the generated observation and verdict JSON.
+monitor_model: sonnet
+monitor_mode: shadow
+pane_capture_lines: 160
+
+# New control plane. Only workers marked managed_by: v2 and read_only: false
+# may receive pane-id nudges from the actuator.
+control_plane:
+  name: v2
+  registry_path: control-v2/registry.json
+
+# Legacy autokaggle layouts are imported read-only for visibility. The local
+# monitor must not send worker nudges to panes imported from these sources.
+legacy_importers:
+  - type: autokaggle
+    root: /workspace/repo/autokaggle
+    read_only: true
+
+# Phase recipe enforced by the worker monitor. Repeated phase2/phase3 passes
+# ask the worker to derive the next direction from previous results.
+phase_recipe:
+  phase1: 1
+  phase2: 3
+  phase3: 3
+
+# A GPU may host multiple CPU/LLM-active workers, but GPU commands must share
+# the per-GPU lock file.
+gpu_slots_per_uuid: 4
+gpu_lock_dir: /tmp
+
+# Optional OpenTelemetry side channel. Disabled by default and never affects
+# normal scheduling, Feishu sync, or worker control unless KDA_OTEL_ENABLED=1
+# is set when starting new workers.
+telemetry:
+  enabled: false
+  remote_dir: telemetry/runs
+  local_dir: outputs/telemetry
+  host: 127.0.0.1
+  port: 4318
+  protocol: http/json
+
+feishu:
+  # Required for sync-feishu preflight/write. Leave blank to disable Feishu writes.
+  base_token: ""
+  table_id: ""

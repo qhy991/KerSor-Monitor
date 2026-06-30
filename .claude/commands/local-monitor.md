@@ -1,0 +1,112 @@
+# KDA Local Monitor
+
+Run the local control-plane role for a remote KDA Monitor deployment.
+
+## Arguments
+
+The user invokes you as `/local-monitor [action] [args...]`:
+
+- `/local-monitor snapshot` - collect one remote snapshot and print a table
+- `/local-monitor snapshot --json` - collect one remote snapshot and print JSON
+- `/local-monitor legacy-snapshot` - read-only import of legacy autokaggle state
+- `/local-monitor init-feishu <base-url>` - initialize Feishu dashboard fields and task rows
+- `/local-monitor sync` - dry-run Feishu sync
+- `/local-monitor sync --write` - write the current remote state to Feishu
+- `/local-monitor patrol` - ask the remote orchestrator to run one patrol
+- `/local-monitor status` - ask the remote orchestrator for a status pass
+- `/local-monitor start <task_id>` - ask the remote orchestrator to start a task
+- `/local-monitor stop <task_id>` - ask the remote orchestrator to stop a task
+- `/local-monitor loop` - enter local monitor loop mode
+- `/local-monitor observe-worker <task_id> --pane-id <pane_id>` - collect one worker observation JSON
+- `/local-monitor verdict-prompt <observation.json>` - build the sonnet monitor verdict prompt
+- `/local-monitor actuate-worker --observation <observation.json> --verdict <verdict.json>` - optionally nudge a worker pane
+
+Parse the action from `$ARGUMENTS`. Use `config/local-monitor.yaml` unless the
+user provided a different config path.
+
+## Role
+
+You run on the local Mac. Your responsibilities are:
+
+1. Read remote state over SSH.
+2. Convert the remote snapshot into existing Feishu dashboard rows.
+3. Write Feishu only when explicitly requested.
+4. Send high-level control messages to the remote orchestrator tmux window.
+5. For worker-level monitors, collect deterministic state first, ask a sonnet
+   monitor for a strict JSON verdict, then nudge only the recorded `pane_id` in
+   `active` mode.
+6. Treat legacy autokaggle imports as read-only visibility only. Do not control
+   imported legacy panes.
+
+Do not directly launch, kill, or modify workers from the local monitor.
+
+## Command Mapping
+
+```bash
+# snapshot
+python3 scripts/local-monitor.py snapshot --config config/local-monitor.yaml
+
+# snapshot --json
+python3 scripts/local-monitor.py snapshot --config config/local-monitor.yaml --format json
+
+# legacy autokaggle read-only import
+python3 scripts/local-monitor.py legacy-snapshot --config config/local-monitor.yaml
+python3 scripts/local-monitor.py legacy-snapshot --config config/local-monitor.yaml --format json
+
+# initialize Feishu dashboard fields and task rows
+python3 scripts/local-monitor.py init-feishu --config config/local-monitor.yaml --url <BASE_URL>
+python3 scripts/local-monitor.py init-feishu --config config/local-monitor.yaml --url <BASE_URL> --write
+
+# sync dry-run
+python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --dry-run
+
+# sync live
+python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --write
+
+# patrol/status/start/stop
+python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml patrol
+python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml status
+python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml start <TASK_ID>
+python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml stop <TASK_ID>
+
+# loop
+python3 scripts/local-monitor.py loop --config config/local-monitor.yaml --interval 300
+
+# worker observation
+python3 scripts/local-monitor.py observe-worker <TASK_ID> --config config/local-monitor.yaml --pane-id <PANE_ID> --gpu-uuid <GPU_UUID> --gpu-index <GPU_INDEX> --gpu-slot <SLOT> --output observation.json
+
+# sonnet verdict prompt
+python3 scripts/local-monitor.py verdict-prompt observation.json --output verdict.prompt.txt
+
+# active worker nudge
+python3 scripts/local-monitor.py actuate-worker --config config/local-monitor.yaml --observation observation.json --verdict verdict.json --mode active --send
+```
+
+## Safety Rules
+
+- If the config is missing `ssh_host` or `remote_root`, stop and ask the user to
+  fill `config/local-monitor.yaml`.
+- If SSH snapshot collection fails, do not write Feishu.
+- If `lark-cli doctor --offline` fails before a live write, stop and surface the
+  auth or scope issue.
+- `init-feishu` defaults to dry-run; create fields or records only with an
+  explicit `--write` on the user-provided Base/Table target.
+- Write raw snapshot statuses to Feishu, for example `no_workspace`,
+  `starting`, `phase1_complete`, and `legacy_running`; do not collapse them into
+  coarse `pending`/`running` buckets.
+- Treat Feishu as a mirror. Do not read Feishu to decide worker state.
+- Send only these remote orchestrator messages:
+  - `[local-monitor] patrol`
+  - `[local-monitor] status`
+  - `[local-monitor] start <TASK_ID>`
+  - `[local-monitor] stop <TASK_ID>`
+- Worker nudges must go through `tmux send-keys -t <pane_id>` only after a
+  sonnet verdict, only in `active` mode, and only when `managed_by=v2` and
+  `read_only=false`.
+- Legacy workers imported from `tasks.json` / `monitor/state/bindings.tsv` must
+  stay `managed_by=legacy` and `read_only=true`.
+- Worker registry entries must preserve `session_name`, `session_id`,
+  `window_id`, `pane_id`, `pane_pid`, cwd, GPU UUID/index/slot, phase recipe,
+  and monitor mode.
+- Multiple workers may share one GPU UUID for CPU/LLM work; GPU-bound work must
+  use the shared per-GPU lock file.
