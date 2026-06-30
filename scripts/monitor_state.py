@@ -1308,12 +1308,21 @@ def collect_remote_snapshot(config: dict[str, Any], timeout: int = 30) -> dict[s
     }
 
 
+def default_legacy_autokaggle_root(config: dict[str, Any]) -> str:
+    for importer in config.get("legacy_importers") or []:
+        if not isinstance(importer, dict):
+            continue
+        if importer.get("type") == "autokaggle" and importer.get("root"):
+            return str(importer["root"])
+    return str(config["remote_root"])
+
+
 def collect_remote_legacy_autokaggle_snapshot(
     config: dict[str, Any],
     legacy_root: str | None = None,
     timeout: int = 30,
 ) -> dict[str, Any]:
-    root = legacy_root or config["remote_root"]
+    root = legacy_root or default_legacy_autokaggle_root(config)
     source = {
         "kind": "ssh",
         "ssh_host": config["ssh_host"],
@@ -1760,6 +1769,69 @@ def build_feishu_rows(snapshot: dict[str, Any], task_filter: str | None = None) 
             }
         )
     return rows
+
+
+def filter_feishu_rows(rows: list[dict[str, Any]], task_filter: str | None = None) -> list[dict[str, Any]]:
+    if not task_filter:
+        return rows
+    normalized_filter = task_filter.upper()
+    return [
+        row
+        for row in rows
+        if str(row.get("Task ID", "")).upper() == normalized_filter
+        or str(row.get("_legacy_task_id", "")).upper() == normalized_filter
+    ]
+
+
+def canonical_legacy_feishu_task_id(legacy_task_id: Any, primary_task_ids: dict[str, str]) -> str:
+    task_id = str(legacy_task_id or "").strip()
+    if not task_id:
+        return task_id
+    upper = task_id.upper()
+    if upper in primary_task_ids:
+        return primary_task_ids[upper]
+    if task_id.isdigit():
+        flashinfer_id = f"FI-{int(task_id):03d}"
+        if flashinfer_id.upper() in primary_task_ids:
+            return primary_task_ids[flashinfer_id.upper()]
+    return task_id
+
+
+def merge_legacy_feishu_rows(
+    primary_rows: list[dict[str, Any]],
+    legacy_rows: list[dict[str, Any]],
+    task_filter: str | None = None,
+) -> list[dict[str, Any]]:
+    primary_by_upper = {str(row.get("Task ID", "")).upper(): str(row.get("Task ID", "")) for row in primary_rows}
+    merged_order: list[str] = []
+    merged: dict[str, dict[str, Any]] = {}
+    for row in primary_rows:
+        key = str(row.get("Task ID", "")).upper()
+        if not key:
+            continue
+        merged_order.append(key)
+        merged[key] = dict(row)
+
+    replaceable_primary_statuses = {"no_workspace", "pending", "queued", "unknown"}
+    for legacy_row in legacy_rows:
+        legacy_task_id = str(legacy_row.get("Task ID", "")).strip()
+        task_id = canonical_legacy_feishu_task_id(legacy_task_id, primary_by_upper)
+        key = task_id.upper()
+        if not key:
+            continue
+        row = dict(legacy_row)
+        row["Task ID"] = task_id
+        row["_legacy_task_id"] = legacy_task_id
+        existing = merged.get(key)
+        if existing:
+            existing_status = str(existing.get("_raw_status") or existing.get("Status") or "")
+            if existing_status not in replaceable_primary_statuses:
+                continue
+        else:
+            merged_order.append(key)
+        merged[key] = row
+
+    return filter_feishu_rows([merged[key] for key in merged_order if key in merged], task_filter=task_filter)
 
 
 def build_record_update_payload(row: dict[str, Any]) -> dict[str, Any]:

@@ -110,6 +110,7 @@ Default role models:
 /local-monitor init-feishu <base-url> # Initialize dashboard fields/rows
 /local-monitor sync            # Dry-run Feishu row mapping
 /local-monitor sync --write    # Write Feishu using local lark-cli user auth
+/local-monitor sync --include-legacy # Merge read-only legacy rows into Feishu sync
 /local-monitor patrol          # Ask remote orchestrator to patrol
 /local-monitor start FI-002    # Ask remote orchestrator to start a task
 
@@ -187,6 +188,7 @@ python3 scripts/local-monitor.py legacy-snapshot --config config/local-monitor.y
 python3 scripts/local-monitor.py init-feishu --config config/local-monitor.yaml --url https://your-feishu-base-url
 python3 scripts/local-monitor.py init-feishu --config config/local-monitor.yaml --url https://your-feishu-base-url --write
 python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --dry-run
+python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --dry-run --include-legacy
 python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --write
 
 # 6. Worker monitor flow: observe -> sonnet verdict -> optional active nudge

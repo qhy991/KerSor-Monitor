@@ -29,6 +29,7 @@ from monitor_state import (
     field_schema_from_preflight,
     feishu_status_field_definition,
     load_config,
+    merge_legacy_feishu_rows,
     missing_feishu_init_field_definitions,
     missing_feishu_status_options,
     parse_feishu_base_reference,
@@ -83,33 +84,47 @@ def run_legacy_snapshot(args: argparse.Namespace) -> int:
 
 def run_sync_feishu(args: argparse.Namespace) -> int:
     config, snapshot = collect_snapshot_from_config(args.config)
-    rows = build_feishu_rows(snapshot, task_filter=args.task)
+    rows = build_feishu_rows(snapshot)
+    legacy_snapshot = None
+    include_legacy = args.include_legacy or bool(args.legacy_root)
+    if include_legacy:
+        legacy_snapshot = collect_remote_legacy_autokaggle_snapshot(config, legacy_root=args.legacy_root)
+        rows = merge_legacy_feishu_rows(rows, build_feishu_rows(legacy_snapshot), task_filter=args.task)
+    else:
+        rows = build_feishu_rows(snapshot, task_filter=args.task)
+    reachable = bool(snapshot.get("reachable")) and (not include_legacy or bool((legacy_snapshot or {}).get("reachable")))
     try:
         base_token, table_id = require_feishu_target(config)
     except ValueError as exc:
         if not args.write and args.no_preflight:
             print_status_summary(rows, title="Local Monitor Feishu Dry Run")
             print("(dry run - no Feishu target configured; no preflight)")
-            return 0 if snapshot.get("reachable") else 1
+            return 0 if reachable else 1
         print(f"ERROR: {exc}", file=sys.stderr)
         print("Refusing to run Feishu preflight or write without an explicit target.", file=sys.stderr)
         return 2
 
-    if args.write and not snapshot.get("reachable"):
+    if args.write and not reachable:
         print("Remote snapshot is not reachable; refusing to write Feishu.", file=sys.stderr)
         for error in snapshot.get("errors") or []:
             print(f"  - {error}", file=sys.stderr)
+        if legacy_snapshot:
+            for error in legacy_snapshot.get("errors") or []:
+                print(f"  - legacy: {error}", file=sys.stderr)
         return 1
 
     if not args.write:
         print_status_summary(rows, title="Local Monitor Feishu Dry Run")
+        if include_legacy:
+            legacy_count = len(build_feishu_rows(legacy_snapshot or {}))
+            print(f"(including legacy snapshot rows: {legacy_count})")
         if not args.no_preflight:
             report = run_feishu_preflight(rows, base_token=base_token, table_id=table_id)
             print_feishu_preflight(report)
             if not report.get("ok"):
                 return 1
         print("(dry run - no Feishu update; pass --write to update)")
-        return 0 if snapshot.get("reachable") else 1
+        return 0 if reachable else 1
 
     ready = ensure_lark_cli_ready()
     if ready != 0:
@@ -496,6 +511,8 @@ def build_parser() -> argparse.ArgumentParser:
     sync = subparsers.add_parser("sync-feishu", help="Preview or write Feishu rows from a remote snapshot.")
     add_config_arg(sync)
     sync.add_argument("--task", help="Only sync one task id, e.g. FI-002.")
+    sync.add_argument("--include-legacy", action="store_true", help="Merge read-only legacy autokaggle rows into the Feishu sync.")
+    sync.add_argument("--legacy-root", help="Legacy autokaggle root. Implies --include-legacy.")
     sync.add_argument("--no-preflight", action="store_true", help="Skip lark-cli/Base access preflight during dry-run.")
     sync_mode = sync.add_mutually_exclusive_group()
     sync_mode.add_argument("--dry-run", action="store_true", help="Preview only. This is the default.")

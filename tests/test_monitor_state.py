@@ -26,11 +26,14 @@ from monitor_state import (  # noqa: E402
     build_tmux_send_command,
     build_worker_observation,
     build_worker_registry_record,
+    canonical_legacy_feishu_task_id,
     default_gpu_lock_file,
+    default_legacy_autokaggle_root,
     feishu_schema_diagnostics,
     format_speedup,
     feishu_status_field_definition,
     load_config,
+    merge_legacy_feishu_rows,
     missing_feishu_init_field_definitions,
     missing_feishu_status_options,
     parse_legacy_binding_line,
@@ -162,6 +165,68 @@ class MonitorStateTests(unittest.TestCase):
         self.assertEqual(loaded["control_plane"]["name"], "v2")
         self.assertEqual(loaded["feishu"]["base_token"], "")
         self.assertEqual(loaded["feishu"]["table_id"], "")
+
+    def test_legacy_snapshot_defaults_to_configured_legacy_importer_root(self) -> None:
+        config = {
+            "remote_root": "/workspace/repo/autokaggle/control-v2",
+            "legacy_importers": [
+                {"type": "autokaggle", "root": "/workspace/repo/autokaggle", "read_only": True},
+            ],
+        }
+
+        self.assertEqual(default_legacy_autokaggle_root(config), "/workspace/repo/autokaggle")
+
+    def test_legacy_feishu_rows_merge_into_existing_flashinfer_task_ids(self) -> None:
+        primary_rows = [
+            {
+                "Task ID": "FI-002",
+                "Status": "no_workspace",
+                "Round": 0,
+                "Candidates": 0,
+                "Speedup": "",
+                "Updated": "2026-06-30 00:00:00",
+                "_raw_status": "no_workspace",
+            },
+            {
+                "Task ID": "L1-003",
+                "Status": "running",
+                "Round": 1,
+                "Candidates": 2,
+                "Speedup": "",
+                "Updated": "2026-06-30 00:00:00",
+                "_raw_status": "running",
+            },
+        ]
+        legacy_rows = [
+            {
+                "Task ID": "002",
+                "Status": "legacy_running",
+                "Round": 0,
+                "Candidates": 21,
+                "Speedup": "",
+                "Updated": "2026-06-30 10:49:06",
+                "_raw_status": "legacy_running",
+            },
+            {
+                "Task ID": "L1-003",
+                "Status": "legacy_done",
+                "Round": 0,
+                "Candidates": 9,
+                "Speedup": "",
+                "Updated": "2026-06-30 10:49:06",
+                "_raw_status": "legacy_done",
+            },
+        ]
+
+        merged = merge_legacy_feishu_rows(primary_rows, legacy_rows)
+
+        self.assertEqual(canonical_legacy_feishu_task_id("002", {"FI-002": "FI-002"}), "FI-002")
+        by_id = {row["Task ID"]: row for row in merged}
+        self.assertEqual(by_id["FI-002"]["Status"], "legacy_running")
+        self.assertEqual(by_id["FI-002"]["Candidates"], 21)
+        self.assertEqual(by_id["FI-002"]["_legacy_task_id"], "002")
+        self.assertEqual(by_id["L1-003"]["Status"], "running")
+        self.assertEqual(merge_legacy_feishu_rows(primary_rows, legacy_rows, task_filter="002")[0]["Task ID"], "FI-002")
 
     def test_feishu_target_must_be_explicit(self) -> None:
         with self.assertRaisesRegex(ValueError, "Feishu target is not configured"):

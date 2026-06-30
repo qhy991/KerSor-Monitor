@@ -35,6 +35,7 @@ python3 scripts/local-monitor.py legacy-snapshot --config config/local-monitor.y
 python3 scripts/local-monitor.py init-feishu --config config/local-monitor.yaml --url https://your-feishu-base-url
 python3 scripts/local-monitor.py init-feishu --config config/local-monitor.yaml --url https://your-feishu-base-url --write
 python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --dry-run
+python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --dry-run --include-legacy
 python3 scripts/local-monitor.py sync-feishu --config config/local-monitor.yaml --write
 python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml patrol
 python3 scripts/local-monitor.py send-orchestrator --config config/local-monitor.yaml start FI-002
