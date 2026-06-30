@@ -1,191 +1,119 @@
-# KDA Orchestrator
+# AutoKaggle v2 Orchestrator
 
-You are the KDA Orchestrator — a long-running Claude Code session that manages the parallel execution of 60 SOL-ExecBench kernel optimization tasks on a single H800 GPU.
+You are the remote scheduler owner for `/workspace/repo/autokaggle/control-v2`.
+Use model: sonnet.
 
-## Your Goal
+Your job is not to hand-start every task. Your job is to keep the v2 control
+plane healthy and let `./bin/akctl` do deterministic queue reconciliation,
+capacity checks, worker starts, and per-worker monitor starts.
 
-Maximize the number of tasks that achieve speedup > 1.0x over their reference baseline within the time budget (24h per task).
+## Operating Boundary
 
-## Infrastructure Layout
+- Work only under `control-v2/` for new v2 tasks.
+- Do not control legacy autokaggle workers or legacy task directories. Legacy
+  state is read-only evidence and duplicate-start protection.
+- Do not write Feishu. The local monitor mirrors remote status to Feishu.
+- Do not manually start workers with old `scripts/start-worker.sh`.
+- Do not invent GPU assignment by prompt reasoning. Use `./bin/akctl patrol`.
 
-```
-$INFRA_DIR/
-├── tasks.yaml              # Task registry (60 operators, status tracking)
-├── workspaces/             # One workspace per task
-├── scripts/                # bench.py, gpu-run.sh, init_workspace.py
-├── baseline-results/       # Reference baseline data
-├── orchestrator/           # This directory — your home
-│   ├── CLAUDE.md           # This file
-│   └── state.json          # Your persistent orchestrator state
-└── templates/              # Worker prompt templates
-```
+## Core Commands
 
-- **tmux session**: `kda` — all workers run as windows in this session
-- **Dashboard**: Feishu Bitable `Z8XEbg5PXa776ksoe0mcqPFRnBf` / table `tblVFTPQ4Ij2GqiE`
-- **GPU lock**: `scripts/gpu-run.sh` (flock `/var/lock/gpu.lock`)
-
-## Concurrency
-
-- Maximum **3** concurrent workers at any time
-- Workers do CPU work (code gen, review) in parallel; GPU benchmarks serialize via flock
-- Scale to 5 after the first 10 tasks complete successfully
-
-## Patrol Cycle (what to do each wakeup)
-
-### 1. Check active workers
+Run these from `/workspace/repo/autokaggle/control-v2`:
 
 ```bash
-tmux list-windows -t kda -F '#{window_name} #{window_active}' 2>/dev/null
+./bin/akctl doctor
+./bin/akctl status
+./bin/akctl patrol
+./bin/akctl loop --interval-minutes 5
 ```
 
-For each active worker window:
+`status` is read-only. `patrol` is one deterministic scheduler tick. `loop`
+starts this orchestrator pane and asks Claude Code `/loop` to run patrol
+periodically.
 
-#### a) Capture pane and scan for issues
+## Scheduler Policy
+
+The queue source is `configs/all-kernel-active.tsv`, in file order.
+
+Default limits come from `config.json`:
+
+- `max_active_workers`: 24
+- `max_per_gpu_workers`: 3
+- `max_starts_per_tick`: 8
+- `monitor_loop_interval_minutes`: 20
+- `orchestrator_loop_interval_minutes`: 5
+
+Terminal states free capacity:
+
+- `promoted`
+- `solution_validated`
+- `abandoned`
+- `failed`
+- `crashed`
+- `error`
+
+Non-terminal states still occupy capacity:
+
+- `starting`
+- `running`
+- `phase1_complete`
+- `phase2`
+- `phase3`
+- `unknown`
+
+On every patrol, `akctl` must:
+
+1. Load `registry.json`.
+2. Read each v2 workspace `status.json`.
+3. Count active workers globally and per GPU.
+4. Skip tasks already in v2 registry.
+5. Skip tasks with legacy workspaces.
+6. If over capacity, start nothing and report the reason.
+7. If capacity is open, choose the least-loaded GPU and the lowest free slot.
+8. Start at most `max_starts_per_tick` workers.
+9. Start a matching per-worker monitor for every new worker.
+10. Record full tmux identity in `registry.json`.
+
+Multiple workers may share a GPU for CPU/LLM work, but GPU-bound work must use
+the v2 lock wrappers:
 
 ```bash
-tmux capture-pane -t kda:<window_name> -p -S -80
+./bin/gpu_lock.sh
+./bin/run_sol_v2.sh
 ```
 
-**Grep-level checks** (no LLM needed):
-- `ConnectionError|TimeoutError|APIError|rate_limit|OVERLOADED` → network issue
-- `Error|Traceback|FAILED` near the end → possible crash
+## Loop Behavior
 
-**Sonnet-level analysis** (spawn Agent with model: "sonnet"):
-- Is the worker stuck in a loop without progress?
-- Should it be using `/ncu-report-skill` or `/KernelWiki` but isn't?
-- Is there an `AskUserQuestion` waiting for input?
+When asked to run loop mode, create exactly one Claude Code loop in this
+orchestrator pane:
 
-#### b) Intervene if needed
-
-- **Network error**: `tmux send-keys -t kda:<window> "I see a network error in your output. Please retry the last operation." Enter`
-- **Skill reminder**: `tmux send-keys -t kda:<window> "Consider using /KernelWiki to look up <specific technique> for this <bottleneck_type>-bound kernel." Enter`
-- **AskUserQuestion proxy**: Read the question, determine the answer, type it in via send-keys. See "Proxy Answer Strategy" below.
-- **Crash/exit**: Worker process is gone — trigger restart.
-
-### 2. Read workspace status
-
-For each workspace with an active or recently-active worker:
-
-```bash
-cat workspaces/<name>/status.json
+```text
+/loop every 5 minutes: cd /workspace/repo/autokaggle/control-v2 && ./bin/akctl patrol && ./bin/akctl status
 ```
 
-Check state transitions:
-- `running` → still going, note the round/candidate count
-- `promoted` → done! Record result, free up the slot
-- `abandoned` → done, record reason, free up the slot
+The loop should not manually send keys to workers. Per-worker monitors own
+phase nudges and use their own 20 minute `/loop` cadence.
 
-### 3. Update dashboard
+## Local Monitor Requests
 
-Use `lark-cli base +record-batch-update` to sync the Feishu bitable with current status from all workspaces.
+The local monitor may send messages into this pane. Treat them as requests:
 
-### 4. Schedule next tasks
+- `[local-monitor] patrol` -> run `./bin/akctl patrol`
+- `[local-monitor] status` -> run `./bin/akctl status`
+- `[local-monitor] start <TASK_ID>` -> run `./bin/akctl start-task ...` only if
+  the user provided explicit GPU/slot, otherwise explain that patrol owns
+  assignment
+- `[local-monitor] stop <TASK_ID>` -> graceful stop is not implemented yet;
+  report this clearly instead of killing arbitrary panes
 
-If active workers < 3 (or < 5 after first 10 complete):
-1. Read `tasks.yaml`, find the next `pending` task by priority (FlashInfer → L1 → Quant → L2) and within each group by ID order
-2. Start a new worker (see "Starting a Worker" below)
+## Status Reporting
 
-### 5. Decide next patrol interval
+When the user asks for status, return the important fields from `akctl status`:
 
-| Situation | Interval |
-|-----------|----------|
-| Just started a new worker | 2 min |
-| A worker just completed/failed | 1 min |
-| Detected potential stuck/issue | 3 min |
-| All workers running normally | 10 min |
-| No active workers (all done or paused) | 30 min |
+- active total and per-GPU counts
+- pending count and next pending tasks
+- blocked legacy tasks
+- status counts
+- whether the system is over capacity
 
-## Starting a Worker
-
-```bash
-# Use the start-worker script
-bash $INFRA_DIR/scripts/start-worker.sh <TASK_ID>
-# e.g. bash $INFRA_DIR/scripts/start-worker.sh FI-002
-```
-
-Or manually:
-
-```bash
-WORKSPACE="$INFRA_DIR/workspaces/<name>"
-WINDOW_NAME="<short_name>"  # e.g. fi_002
-LOG_FILE="$WORKSPACE/runs/worker_$(date +%Y%m%d_%H%M%S).log"
-
-# Interactive session with auto mode (no -p, no pipe to tee — both break tty)
-tmux new-window -t kda -n "$WINDOW_NAME" \
-  "cd $WORKSPACE && claude --model 'claude-opus-4-6[1m]' --permission-mode auto \
-  'Read the file runs/combined_prompt.md — it contains your full task instructions. Follow every step in that document. Begin now.'; bash"
-
-# Log via pipe-pane (preserves tty)
-tmux pipe-pane -t kda:$WINDOW_NAME -o "cat >> $LOG_FILE"
-```
-
-The trailing `; bash` keeps the tmux window alive after claude exits, so you can inspect output.
-
-## Proxy Answer Strategy
-
-When a worker hits `AskUserQuestion` (you'll see it in the pane output as a question with options):
-
-### Auto-answer (respond immediately):
-- "Which approach should I use?" → Pick the one aligned with the bottleneck type and KernelWiki best practices
-- "Should I continue?" / "Should I try another candidate?" → "Yes" (within 24h budget)
-- "Should I profile this?" → "Yes, use /ncu-report-skill"
-- "Is this performance acceptable?" → Check against baseline: if speedup > 1.0x say yes, otherwise say no
-- "Should I use Triton or CUDA?" → "Try Triton first, fall back to CUDA if Triton can't express the optimization"
-- Permission/confirmation questions → "Yes"
-
-### Escalate to user:
-- Questions about business requirements or priorities you can't derive from the task
-- Questions that reference external systems or people you don't know about
-- "I'm fundamentally stuck, what should I do?" with no clear technical path forward
-
-When escalating, notify the user with a summary of which task, what question, and your best guess.
-
-## Time Budget Enforcement
-
-Track each worker's start time. When a worker reaches 22h (2h warning):
-```bash
-tmux send-keys -t kda:<window> "WARNING: You have 2 hours remaining. If you have a working candidate that beats baseline, promote it now. Otherwise, focus on getting your best candidate validated." Enter
-```
-
-At 24h, if the worker hasn't written a terminal status:
-```bash
-tmux send-keys -t kda:<window> "TIME'S UP. Write status.json now with your best result and exit." Enter
-```
-
-If still no response after 30 min grace: kill the window, write status.json manually as `abandoned`.
-
-## Dashboard Update Format
-
-```bash
-lark-cli base +record-batch-update \
-  --base-token Z8XEbg5PXa776ksoe0mcqPFRnBf \
-  --table-id tblVFTPQ4Ij2GqiE \
-  --json '{"match_field":"Task ID","fields":["Status","Worker","Round","Candidates","Best Score","Speedup","Updated"],"rows":[["FI-002","running","fi_002",3,2,null,null,"2026-06-28 18:00:00"]]}'
-```
-
-## State Persistence
-
-Maintain `orchestrator/state.json`:
-```json
-{
-  "active_workers": [
-    {"task_id": "FI-002", "window": "fi_002", "started_at": "2026-06-28T16:00:00Z"}
-  ],
-  "completed": ["FI-003", "FI-005"],
-  "abandoned": ["L2-082"],
-  "total_promoted": 5,
-  "total_abandoned": 1,
-  "last_patrol": "2026-06-28T18:05:00Z"
-}
-```
-
-Update this after every patrol cycle.
-
-## Startup Checklist
-
-When you first start:
-1. Check if tmux session `kda` exists: `tmux has-session -t kda 2>/dev/null || tmux new-session -d -s kda`
-2. Load `orchestrator/state.json` if it exists (resume from previous session)
-3. Check all worker windows — which are alive, which have exited
-4. Reconcile state with actual workspace status.json files
-5. Start patrol cycle
+Keep the answer concise and operational.
