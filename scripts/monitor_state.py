@@ -92,6 +92,7 @@ FEISHU_STATUS_OPTION_ORDER = (
     "phase3_iter1_done",
     "phase3_iter1_complete",
     "phase3_iteration2_complete",
+    "phase3_iteration3_complete",
     "phase3_complete",
     "solution_validated",
     "promoted",
