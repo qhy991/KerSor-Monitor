@@ -9,6 +9,10 @@ WORKSPACES_DIR="$INFRA_DIR/workspaces"
 TEMPLATES_DIR="$INFRA_DIR/templates"
 TMUX_SESSION="${2:-kda}"
 
+shell_quote() {
+    printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
 TASK_ID="$1"
 if [ -z "$TASK_ID" ]; then
     echo "Usage: $0 <task_id> [--session <tmux_session>]"
@@ -90,15 +94,61 @@ cd - >/dev/null
 # No pipe to tee — pipe kills tty, making claude buffer all output.
 # Use tmux capture-pane for monitoring, tmux pipe-pane for logging.
 BOOT_PROMPT="Read the file runs/combined_prompt.md — it contains your full task instructions. Follow every step in that document. Begin now."
+OTEL_BOOTSTRAP=""
+if [ "${KDA_OTEL_ENABLED:-0}" = "1" ]; then
+    OTEL_ENV_SCRIPT="$SCRIPT_DIR/otel-env.sh"
+    if [ ! -f "$OTEL_ENV_SCRIPT" ]; then
+        echo "ERROR: telemetry requested but $OTEL_ENV_SCRIPT is missing"
+        exit 1
+    fi
+    OTEL_BOOTSTRAP="export KDA_OTEL_ENABLED=1 KDA_TASK_ID=$(shell_quote "$TASK_ID") KDA_WORKSPACE=$(shell_quote "$WORKSPACE") KDA_OTEL_ENDPOINT=$(shell_quote "${KDA_OTEL_ENDPOINT:-http://127.0.0.1:4318}") KDA_OTEL_PROTOCOL=$(shell_quote "${KDA_OTEL_PROTOCOL:-http/json}"); . $(shell_quote "$OTEL_ENV_SCRIPT"); "
+fi
 tmux new-window -t "$TMUX_SESSION" -n "$WINDOW_NAME" \
-    "cd '$WORKSPACE' && claude --model 'claude-opus-4-6[1m]' --permission-mode auto '$BOOT_PROMPT'; echo '=== Worker exited at \$(date) ==='; bash"
+    "cd $(shell_quote "$WORKSPACE") && ${OTEL_BOOTSTRAP}claude --model 'claude-opus-4-6[1m]' --permission-mode auto $(shell_quote "$BOOT_PROMPT"); echo '=== Worker exited at \$(date) ==='; bash"
 
 # Start logging via tmux pipe-pane (captures output without breaking tty)
 tmux pipe-pane -t "$TMUX_SESSION:$WINDOW_NAME" -o "cat >> '$LOG_FILE'"
 
+# Persist tmux-native identity. Window names are for humans; pane_id is the
+# control target and pane_pid roots process/GPU ownership checks.
+TMUX_ROW=$(tmux display-message -p -t "$TMUX_SESSION:$WINDOW_NAME" -F '#{session_name}	#{session_id}	#{window_id}	#{window_name}	#{pane_id}	#{pane_pid}	#{pane_current_command}	#{pane_current_path}')
+python3 - "$WORKSPACE/status.json" "$TMUX_ROW" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path = Path(sys.argv[1])
+row = sys.argv[2]
+fields = (
+    "session_name",
+    "session_id",
+    "window_id",
+    "window_name",
+    "pane_id",
+    "pane_pid",
+    "current_command",
+    "cwd",
+)
+parts = row.split("\t")
+while len(parts) < len(fields):
+    parts.append("")
+worker = dict(zip(fields, parts[: len(fields)]))
+try:
+    worker["pane_pid"] = int(worker["pane_pid"])
+except ValueError:
+    worker["pane_pid"] = None
+
+data = json.loads(path.read_text())
+data["worker"] = worker
+data["timestamp"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+
 echo "Started worker for $TASK_ID"
 echo "  Workspace: $WORKSPACE"
 echo "  tmux: $TMUX_SESSION:$WINDOW_NAME"
+echo "  pane: $(printf '%s' "$TMUX_ROW" | cut -f5)"
 echo "  Log: $LOG_FILE"
 echo ""
 echo "Attach: tmux attach -t $TMUX_SESSION"
