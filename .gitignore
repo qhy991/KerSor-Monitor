@@ -11,4 +11,7 @@ workspaces/*/candidates/
 workspaces/*/.git/
 orchestrator/logs/
 orchestrator/state.json
+config/local-monitor.yaml
+telemetry/
+outputs/telemetry/
 *.log
