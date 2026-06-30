@@ -13,6 +13,8 @@ import sys
 import json
 from pathlib import Path
 
+import skill_hub
+
 INFRA = Path(__file__).resolve().parent.parent
 PASS = 0
 FAIL = 0
@@ -50,6 +52,8 @@ def main():
         "update-dashboard.py",
         "init_workspace.py",
         "gen_phase1_prompts.py",
+        "skill_hub.py",
+        "install-autokaggle-control.py",
     ]
     for s in required_scripts:
         p = INFRA / "scripts" / s
@@ -108,6 +112,26 @@ def main():
         elif not link.exists():
             broken_links += 1
     check(broken_links == 0, f"{broken_links} workspaces have broken problem/ symlinks")
+
+    # 8. Skill hub, if configured. Existing legacy copied skills are tolerated;
+    # new workspaces should link to this hub at creation time.
+    print("\n[8] Skill hub")
+    manifest = INFRA / "skill_hub" / "manifest.yaml"
+    if manifest.exists():
+        report = skill_hub.check_skill_hub(INFRA, manifest_path=manifest)
+        check(report["ok"], "skill_hub manifest/active links are invalid")
+        copied = 0
+        linked = 0
+        for ws in workspaces:
+            for skill_name in skill_hub.DEFAULT_SKILLS:
+                claude_path = ws / ".claude" / "skills" / skill_name
+                if claude_path.is_symlink():
+                    linked += 1
+                elif claude_path.exists():
+                    copied += 1
+        print(f"  skill workspace refs: linked={linked}, copied={copied}")
+    else:
+        print("  SKIP: skill_hub/manifest.yaml not configured")
 
     # Summary
     print(f"\n{'=' * 60}")

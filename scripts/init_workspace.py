@@ -20,6 +20,8 @@ from pathlib import Path
 
 import yaml
 
+import skill_hub
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -215,6 +217,11 @@ def init_workspace(task: dict, force: bool = False) -> bool:
     # 5. Copy .gitignore
     gitignore_content = GITIGNORE_TEMPLATE.read_text()
     (ws_path / ".gitignore").write_text(gitignore_content)
+
+    # 5b. Link project-local skills from skill_hub when env-builder prepared one.
+    skill_manifest = INFRA_DIR / "skill_hub" / "manifest.yaml"
+    if skill_manifest.exists():
+        skill_hub.link_workspace_skills(INFRA_DIR, ws_path, manifest_path=skill_manifest)
 
     # 6. Create initial solution.py that re-exports reference
     initial_solution = textwrap.dedent("""\

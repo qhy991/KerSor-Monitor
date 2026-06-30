@@ -15,6 +15,8 @@ Optional flags (parse from `$ARGUMENTS`):
 - `--filter <pattern>` — Only include problems matching pattern (e.g. `FlashInfer/*`, `L1/04*`)
 - `--sol-root <path>` — Path to sol-execbench repo (default: `../sol-execbench` relative to infra/)
 - `--infra-dir <path>` — Path to infra directory (default: current repo root)
+- `--skills-manifest <path>` — Use a custom skill hub manifest (default: `<infra-dir>/skill_hub/manifest.yaml`)
+- `--skip-skill-sync` — Validate existing skill hub links, but do not copy/update skill versions
 - `--dashboard` — Also set up Feishu Bitable dashboard
 - `--dry-run` — Show what would be created without doing it
 
@@ -37,7 +39,36 @@ Execute these steps in order. Report progress after each step.
 
 **Output:** Generate `tasks.yaml` with all discovered tasks.
 
-### Step 2: Workspace Initialization
+### Step 2: Skill Hub Initialization
+
+Skill environment is part of readiness, not a best-effort extra. Maintain a
+project-local `<infra-dir>/skill_hub` with required KDA skills:
+
+```text
+skill_hub/
+├── manifest.yaml
+├── versions/<skill>/<version>/
+└── active/<skill> -> ../versions/<skill>/<version>
+```
+
+Required manifest entries:
+- `KernelWiki`
+- `ncu-report-skill`
+
+For remote autokaggle installs, default sources are:
+- `/workspace/repo/kernel-design-agents/skills/KernelWiki`
+- `/workspace/repo/kernel-design-agents/skills/ncu-report-skill`
+
+Run:
+
+```bash
+python3 <infra-dir>/scripts/skill_hub.py sync --root <infra-dir> --manifest <skills-manifest>
+```
+
+If `--dry-run`, print the sync/link actions without writing files. If
+`--skip-skill-sync`, only run checks.
+
+### Step 3: Workspace Initialization
 
 For each task in `tasks.yaml`:
 
@@ -48,14 +79,19 @@ For each task in `tasks.yaml`:
 3. Create `problem/` symlink → sol-execbench problem directory
 4. Create `gpu-run.sh` symlink → `../../scripts/gpu-run.sh`
 5. Create initial `solution.py`: `from problem.reference import run`
-6. Initialize git repo: `git init && git add -A && git commit -m "Initial workspace"`
-7. Generate `CLAUDE.md` from template at `<infra-dir>/templates/CLAUDE.md.tmpl`
+6. Link workspace skills:
+   - `.claude/skills/KernelWiki` -> `<infra-dir>/skill_hub/active/KernelWiki`
+   - `.claude/skills/ncu-report-skill` -> `<infra-dir>/skill_hub/active/ncu-report-skill`
+   - `.codex/skills/KernelWiki` -> `<infra-dir>/skill_hub/active/KernelWiki`
+   - `.codex/skills/ncu-report-skill` -> `<infra-dir>/skill_hub/active/ncu-report-skill`
+7. Initialize git repo: `git init && git add -A && git commit -m "Initial workspace"`
+8. Generate `CLAUDE.md` from template at `<infra-dir>/templates/CLAUDE.md.tmpl`
 
 Use `python3 <infra-dir>/scripts/init_workspace.py` if available, or create workspaces directly.
 
 **Parallelization:** This step is CPU-only and can be parallelized. Fan out sub-agents by group if there are many tasks (>20).
 
-### Step 3: Generate Phase Prompts
+### Step 4: Generate Phase Prompts
 
 For each workspace:
 
@@ -69,7 +105,7 @@ Use `python3 <infra-dir>/scripts/gen_phase1_prompts.py` if available.
 
 **Parallelization:** Fan out sub-agents by group.
 
-### Step 4: Run Baselines
+### Step 5: Run Baselines
 
 For each workspace, run the reference implementation to establish baseline performance:
 
@@ -86,7 +122,7 @@ cd <workspace>
 
 Store results in `<infra-dir>/baseline-results/<group>/<problem_name>/traces.json`.
 
-### Step 4b: Distribute Baselines to Workspaces
+### Step 6: Distribute Baselines to Workspaces
 
 After baselines are collected, distribute them into each workspace so workers don't re-run them:
 
@@ -98,7 +134,7 @@ This converts `baseline-results/<group>/<name>/traces.json` → `workspaces/<nam
 
 **Parallelization:** Can fan out sub-agents by group, but GPU runs within each agent are sequential.
 
-### Step 5: Readiness Verification
+### Step 7: Readiness Verification
 
 For each workspace, verify ALL of the following:
 
@@ -109,6 +145,9 @@ For each workspace, verify ALL of the following:
 - `gpu-run.sh` symlink resolves to `../../scripts/gpu-run.sh`
 - `candidates/`, `docs/`, `outputs/`, `profile/`, `runs/` directories exist
 - `docs/phase1-prompt.md` exists, non-empty, has correct task ID, I/O table, bottleneck, Phase 2/3 instructions
+- Required skill hub active links exist and each active skill has `SKILL.md`
+- New workspaces use `.claude/skills/*` and `.codex/skills/*` symlinks into `skill_hub/active`
+- Existing copied legacy skill directories are reported but not rewritten unless an explicit migration command is requested
 
 **Baselines:**
 - `outputs/baseline.json` exists (injected by distribute-baselines.py or init_workspace.py)
@@ -122,7 +161,7 @@ For each workspace, verify ALL of the following:
 
 **Parallelization:** Fan out sub-agents by group (4 agents for FlashInfer/L1/Quant/L2).
 
-### Step 6: Dashboard Setup (if `--dashboard`)
+### Step 8: Dashboard Setup (if `--dashboard`)
 
 1. Check if Feishu Bitable exists, or create one via `lark-cli base +table-create`
 2. Ensure columns: Task ID, Group, Name, Bottleneck, Status, Worker, Round, Candidates, Baseline Score, Best Score, Speedup, Updated
