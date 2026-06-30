@@ -37,6 +37,7 @@ DEFAULT_TELEMETRY_CONFIG = {
     "protocol": "http/json",
 }
 LEGACY_AUTOKAGGLE_KIND = "autokaggle_legacy"
+FEISHU_LATENCY_PRECISION = 4
 FEISHU_ROW_FIELDS = ("Task ID", "Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated")
 FEISHU_WRITABLE_FIELDS = ("Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated")
 FEISHU_STATUS_OPTION_ORDER = (
@@ -104,7 +105,7 @@ FEISHU_INIT_FIELD_DEFINITIONS = (
     {"type": "number", "name": "Round", "style": {"type": "plain", "precision": 0}},
     {"type": "number", "name": "Candidates", "style": {"type": "plain", "precision": 0}},
     {"type": "number", "name": "Speedup", "style": {"type": "plain", "precision": 4}},
-    {"type": "number", "name": "Latency", "style": {"type": "plain", "precision": 6}},
+    {"type": "number", "name": "Latency", "style": {"type": "plain", "precision": FEISHU_LATENCY_PRECISION}},
     {"type": "number", "name": "MFU", "style": {"type": "plain", "precision": 4}},
     {"type": "datetime", "name": "Updated", "style": {"format": "yyyy-MM-dd HH:mm"}},
 )
@@ -1954,7 +1955,7 @@ def build_feishu_rows(snapshot: dict[str, Any], task_filter: str | None = None) 
                 "Round": task.get("rounds", 0),
                 "Candidates": task.get("candidates", 0),
                 "Speedup": normalize_feishu_speedup(task.get("speedup")),
-                "Latency": normalize_feishu_number(task.get("latency"), precision=6),
+                "Latency": normalize_feishu_number(task.get("latency"), precision=FEISHU_LATENCY_PRECISION),
                 "MFU": normalize_feishu_number(task.get("mfu"), precision=4),
                 "Updated": normalize_feishu_datetime(task.get("updated") or now),
                 "_raw_status": task["status"],
@@ -2030,11 +2031,21 @@ def merge_legacy_feishu_rows(
 
 
 def build_record_update_payload(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in FEISHU_WRITABLE_FIELDS}
+    return {field: normalize_feishu_payload_value(field, row.get(field)) for field in FEISHU_WRITABLE_FIELDS}
 
 
 def build_initial_record_payload(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in FEISHU_ROW_FIELDS}
+    return {field: normalize_feishu_payload_value(field, row.get(field)) for field in FEISHU_ROW_FIELDS}
+
+
+def normalize_feishu_payload_value(field: str, value: Any) -> Any:
+    if field == "Speedup":
+        return normalize_feishu_speedup(value)
+    if field == "Latency":
+        return normalize_feishu_number(value, precision=FEISHU_LATENCY_PRECISION)
+    if field == "MFU":
+        return normalize_feishu_number(value, precision=4)
+    return value
 
 
 def build_feishu_record_upsert_command(
@@ -2131,7 +2142,7 @@ def build_feishu_record_batch_create_command(
 ) -> list[str]:
     payload = {
         "fields": list(FEISHU_ROW_FIELDS),
-        "rows": [[row.get(field) for field in FEISHU_ROW_FIELDS] for row in rows],
+        "rows": [[normalize_feishu_payload_value(field, row.get(field)) for field in FEISHU_ROW_FIELDS] for row in rows],
     }
     return [
         lark_cli,
@@ -2519,7 +2530,7 @@ def print_snapshot_table(snapshot: dict[str, Any]) -> None:
             f"{task['id']:<10} {task['status']:<14} "
             f"{str(task.get('rounds', 0)):>5} {str(task.get('candidates', 0)):>5} "
             f"{format_speedup(task.get('speedup')):>8} "
-            f"{format_metric_number(task.get('latency')):>10} "
+            f"{format_metric_number(task.get('latency'), precision=FEISHU_LATENCY_PRECISION):>10} "
             f"{format_metric_number(task.get('mfu'), precision=4):>8} "
             f"{task.get('updated', '')}"
         )

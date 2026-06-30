@@ -141,7 +141,7 @@ class MonitorStateTests(unittest.TestCase):
 
         self.assertEqual(format_speedup(1.234), "1.23x")
         self.assertEqual(rows[0]["Speedup"], 1.234)
-        self.assertEqual(rows[0]["Latency"], 0.010196)
+        self.assertEqual(rows[0]["Latency"], 0.0102)
         self.assertEqual(rows[0]["MFU"], 0.42)
         self.assertEqual(rows[0]["Status"], "promoted")
 
@@ -220,7 +220,7 @@ class MonitorStateTests(unittest.TestCase):
                 "Round": 0,
                 "Candidates": 21,
                 "Speedup": 1.018,
-                "Latency": 0.010196,
+                "Latency": 0.0102,
                 "MFU": 0.51,
                 "Updated": "2026-06-30 10:49:06",
                 "_raw_status": "legacy_running",
@@ -245,7 +245,7 @@ class MonitorStateTests(unittest.TestCase):
         self.assertEqual(by_id["FI-002"]["Status"], "legacy_running")
         self.assertEqual(by_id["FI-002"]["Candidates"], 21)
         self.assertEqual(by_id["FI-002"]["Speedup"], 1.018)
-        self.assertEqual(by_id["FI-002"]["Latency"], 0.010196)
+        self.assertEqual(by_id["FI-002"]["Latency"], 0.0102)
         self.assertEqual(by_id["FI-002"]["MFU"], 0.51)
         self.assertEqual(by_id["FI-002"]["_legacy_task_id"], "002")
         self.assertEqual(by_id["L1-003"]["Status"], "running")
@@ -272,6 +272,8 @@ class MonitorStateTests(unittest.TestCase):
         field_payload = {"data": {"fields": [{"name": "Task ID", "type": "text"}]}}
         missing = missing_feishu_init_field_definitions(field_payload)
         self.assertEqual([field["name"] for field in missing], ["Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated"])
+        latency_field = next(field for field in missing if field["name"] == "Latency")
+        self.assertEqual(latency_field["style"]["precision"], 4)
         status_field = next(field for field in missing if field["name"] == "Status")
         status_options = {option["name"] for option in status_field["options"]}
         self.assertIn("no_workspace", status_options)
@@ -333,7 +335,7 @@ class MonitorStateTests(unittest.TestCase):
 
         self.assertEqual(create_cmd[:5], ["lark-cli", "--as", "user", "base", "+record-batch-create"])
         self.assertEqual(payload["fields"], ["Task ID", "Status", "Round", "Candidates", "Speedup", "Latency", "MFU", "Updated"])
-        self.assertEqual(payload["rows"][0], ["L1-011", "running", 0, 0, None, 0.010196, None, "2026-06-29 12:00:00"])
+        self.assertEqual(payload["rows"][0], ["L1-011", "running", 0, 0, None, 0.0102, None, "2026-06-29 12:00:00"])
 
     def test_feishu_command_uses_user_identity_and_expected_payload(self) -> None:
         row = {"Task ID": "FI-002", "Status": "running", "Round": 1, "Candidates": 2, "Speedup": "", "Latency": 0.1, "MFU": 0.5, "Updated": "now"}
