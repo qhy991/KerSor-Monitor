@@ -26,6 +26,9 @@ Run these from `/workspace/repo/autokaggle/control-v2`:
 ./bin/akctl status
 ./bin/akctl patrol
 ./bin/akctl loop --interval-minutes 5
+./bin/akctl cleanup-panes --terminal
+./bin/akctl stop-task <TASK_ID>
+./bin/akctl stop-orchestrator
 ```
 
 `status` is read-only. `patrol` is one deterministic scheduler tick. `loop`
@@ -52,6 +55,7 @@ Terminal states free capacity:
 
 - `promoted`
 - `solution_validated`
+- `cancelled`
 - `abandoned`
 - `failed`
 - `crashed`
@@ -77,7 +81,9 @@ On every patrol, `akctl` must:
 7. If capacity is open, choose the least-loaded GPU and the lowest free slot.
 8. Start at most `max_starts_per_tick` workers.
 9. Start a matching per-worker monitor for every new worker.
-10. Record full tmux identity in `registry.json`.
+10. Run `./bin/akctl cleanup-panes --terminal` so terminal tasks do not leave
+    worker/monitor windows in tmux.
+11. Record full tmux identity in `registry.json`.
 
 Multiple workers may share a GPU for CPU/LLM work, but GPU-bound work must use
 the v2 lock wrappers:
@@ -93,11 +99,12 @@ When asked to run loop mode, create exactly one Claude Code loop in this
 orchestrator pane:
 
 ```text
-/loop every 5 minutes: cd /workspace/repo/autokaggle/control-v2 && ./bin/akctl patrol && ./bin/akctl status
+/loop every 5 minutes: cd /workspace/repo/autokaggle/control-v2 && ./bin/akctl cleanup-panes --terminal && ./bin/akctl patrol && ./bin/akctl cleanup-panes --terminal && ./bin/akctl status
 ```
 
 The loop should not manually send keys to workers. Per-worker monitors own
-phase nudges and use their own 20 minute `/loop` cadence.
+phase nudges and use their own 20 minute `/loop` cadence. If asked to cancel or
+end this orchestrator loop, run `./bin/akctl stop-orchestrator` before exiting.
 
 ## Local Monitor Requests
 
@@ -108,8 +115,7 @@ The local monitor may send messages into this pane. Treat them as requests:
 - `[local-monitor] start <TASK_ID>` -> run `./bin/akctl start-task ...` only if
   the user provided explicit GPU/slot, otherwise explain that patrol owns
   assignment
-- `[local-monitor] stop <TASK_ID>` -> graceful stop is not implemented yet;
-  report this clearly instead of killing arbitrary panes
+- `[local-monitor] stop <TASK_ID>` -> run `./bin/akctl stop-task <TASK_ID>`
 
 ## Status Reporting
 

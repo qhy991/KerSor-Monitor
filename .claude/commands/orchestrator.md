@@ -12,6 +12,7 @@ Parse `$ARGUMENTS`:
 - `/orchestrator patrol --dry-run` -> show what the next scheduler tick would start
 - `/orchestrator loop` -> start the orchestrator Claude Code `/loop`
 - `/orchestrator doctor` -> run `akctl doctor`
+- `/orchestrator stop <TASK_ID>` -> run `akctl stop-task <TASK_ID>`
 
 ## Remote Commands
 
@@ -24,6 +25,9 @@ cd /workspace/repo/autokaggle/control-v2
 ./bin/akctl patrol --dry-run
 ./bin/akctl patrol
 ./bin/akctl loop --interval-minutes 5
+./bin/akctl cleanup-panes --terminal
+./bin/akctl stop-task <TASK_ID>
+./bin/akctl stop-orchestrator
 ```
 
 ## Rules
@@ -36,6 +40,8 @@ cd /workspace/repo/autokaggle/control-v2
   monitor.
 - Per-worker monitors use sonnet and run their own Claude Code `/loop` every
   20 minutes.
+- Run `./bin/akctl cleanup-panes --terminal` during loop cleanup so finished
+  worker/monitor panes do not stay in tmux.
 
 ## Scheduler Defaults
 

@@ -1,0 +1,198 @@
+schema: taskflow/v1
+id: flashinfer-fmha-phase2c
+name: FlashInfer FMHA Phase 2C
+description: >
+  Dense causal FMHA prefill optimization on Verda/B200. This is a generic
+  task-flow adapter, not an AutoKaggle task.
+objective: >
+  Drive the Verda FMHA optimization workflow toward 1500 TFLOPS. The initial
+  cycle starts with Phase 1, then Phase 2, then Phase 3. Every later cycle skips
+  Phase 1 and repeats Phase 2 -> Phase 3 using the previous NCU profile and
+  benchmark evidence. Preserve correctness gates and require profile evidence
+  before accepting a speedup.
+
+iteration_protocol:
+  sequence: ["phase1", "phase2", "phase3", "phase2", "phase3"]
+  first_cycle: ["phase1", "phase2", "phase3"]
+  repeat_cycle: ["phase2", "phase3"]
+  phase1_repeat_policy: "skip_after_first_cycle"
+  cycle_acceptance: >
+    A cycle is accepted only when Phase 3 produces a correct implementation,
+    benchmark.csv records the new TFLOPS, and an NCU profile/report explains
+    the next bottleneck. If no speedup lands, the cycle must still end with a
+    documented kill reason and NCU evidence for the next Phase 2.
+  next_cycle_input: >
+    The next Phase 2 must start from the previous Phase 3 benchmark and NCU
+    report, not from a fresh Phase 1 operator mapping.
+
+phases:
+  - id: phase1
+    name: Operator-to-hardware mapping
+    repeat: first_cycle_only
+    required_outputs:
+      - docs/hardware_mapping.md
+      - docs/phase1_summary.md
+    goal: >
+      Map the FMHA operator flow to hardware units: tensor cores/tcgen05, TMA,
+      shared memory, registers, TMEM, SFU/SIMT, global memory, barriers, and
+      synchronization.
+    monitor_rule: >
+      Do not allow implementation work in Phase 1. Nudge only toward concrete
+      operator stages and hardware-unit mapping.
+  - id: phase2
+    name: Pipeline and memory-layout design
+    repeat: every_cycle_after_phase3
+    required_outputs:
+      - docs/phase2_iter<N>_plan.md
+      - docs/phase2_iter<N>_resource_layout.md
+    goal: >
+      Design the next pipeline, shared-memory layout, register ownership, TMEM
+      layout, barrier protocol, and expected bottleneck movement from the last
+      NCU profile.
+    monitor_rule: >
+      Require a clear resource-lifetime proof before Phase 3. Reject plans that
+      do not name the previous profile bottleneck they are attacking.
+  - id: phase3
+    name: Implement and profile the Phase 2 design
+    repeat: every_cycle
+    required_outputs:
+      - benchmark.csv
+      - solutions.jsonl
+      - profile/<iteration_name>/REPORT.md
+    goal: >
+      Implement the Phase 2 design, run correctness gates, run benchmark, then
+      produce an NCU profile/report that becomes the next Phase 2 input.
+    monitor_rule: >
+      Do not accept a claimed speedup without correctness, benchmark, and NCU
+      profile evidence.
+
+performance_targets:
+  metric: "TFLOPS full-S^2 convention"
+  current_baseline_tflops: 649
+  final_target_tflops: 1500
+  hard_floor_tflops: 649
+  minimum_iteration_gain_tflops: 50
+  preferred_iteration_gain_tflops: 100
+  target_policy: >
+    Optimize by ratcheting the accepted baseline upward. Each cycle should aim
+    for +50 to +100 TFLOPS over the last accepted baseline. Do not require a
+    single jump from ~600 to 1500, but never lower the accepted baseline.
+
+profile_protocol:
+  tool: "Nsight Compute (ncu)"
+  required_each_phase3: true
+  artifact_pattern: "profile/<iteration_name>/REPORT.md"
+  minimum_report_contents:
+    - achieved TFLOPS and latency at S=16384
+    - tensor pipe active or equivalent compute-utilization signal
+    - scheduler/no-eligible and top stall reasons
+    - DRAM/shared-memory/TMEM pressure indicators
+    - explicit next-bottleneck recommendation for the following Phase 2
+  handoff_rule: >
+    The next Phase 2 must cite the previous REPORT.md and benchmark row. If no
+    NCU report exists, the Monitor should nudge for profiling before allowing a
+    new design iteration.
+
+precision_contract:
+  input_contract: >
+    Q, K, and V are bf16 tensors with shape [1, 8, S, 256]. K and V must remain
+    bf16. Do not quantize, pack, reinterpret, downcast, or otherwise change K/V
+    data type or storage precision as an optimization lever.
+  intermediate_contract: >
+    Preserve the established intermediate numerical precision for score,
+    softmax, running max/sum, accumulator, correction, and output-rescale paths.
+    Do not lower intermediate precision, replace fp32-style stability state
+    with bf16/fp16/int/FP4/NF4 approximations, or skip correction/rescale unless
+    a correctness proof and strict validation show identical numerical behavior.
+  forbidden_optimization_levers:
+    - FP4 or NF4 K/V
+    - INT8, INT4, packed, or quantized K/V
+    - changing K/V storage dtype away from bf16
+    - reducing softmax or running m/l precision for speed
+    - relaxing tolerance, removing adversarial cases, or editing validation to pass
+  monitor_response: >
+    If the Worker proposes, documents, or implements any forbidden precision or
+    K/V dtype change, the Monitor must treat it as a contract violation and send
+    a corrective nudge before other optimization advice. The correction should
+    explicitly say to revert/avoid the precision change and choose a legal lever
+    such as pipeline depth, scheduling, layout, barriers, coalescing, or NCU
+    bottleneck-driven structure.
+
+quality_gates:
+  precision_gate:
+    level: strict
+    required_before_accepting_speedup:
+      - run validate_d256.py without changing its tolerance or coverage
+      - run a direct correctness check for the active 2-SM/CuTe variant, not only the wrapper baseline
+      - include S=16384 and at least one smaller S sanity case when the modified kernel path supports it
+      - preserve negative controls for wrong dtype, non-contiguous inputs, causal mismatch, all-zero output, and NaN output
+      - report max_err, mean_err, finite status, and whether the output dtype remains bf16
+    tolerance_policy: >
+      Treat the current max_err < 0.05 gate as a minimum bar, not something that
+      may be loosened. Prefer tighter max/mean-error evidence when comparing
+      alternative implementations, and reject any speedup obtained by weakening
+      validation, changing reference math, changing K/V dtype, or lowering
+      intermediate precision.
+  acceptance_rule: >
+    A performance result is not accepted unless the precision gate, benchmark,
+    and NCU handoff all pass for the same candidate.
+
+guardrails:
+  - K/V dtype and storage precision are fixed at bf16.
+  - Intermediate numerical precision is fixed; do not lower softmax, m/l, accumulator, correction, or rescale precision for performance.
+  - Precision and correctness gates can only become stricter; never relax tolerances or remove validation cases.
+  - If a proposed lever depends on quantization or precision reduction, reject it and choose a structural/pipeline/layout lever instead.
+
+stagnation_policy:
+  monitor_action: "nudge_worker"
+  stall_signals:
+    - waiting at prompt with no active command
+    - repeated discussion of process mechanics instead of current phase output
+    - no new plan, benchmark, solution, or profile artifact since last observation
+    - attempting to skip required NCU/profile handoff
+  nudge_style: >
+    Send short, phase-specific nudges. Name the current phase, the expected
+    artifact, and the immediate next command or decision. Avoid generic
+    "continue" messages.
+
+plan_files:
+  - AGENT.md
+  - docs/phase2c_plan.md
+  - docs/phase2c_v1_design.md
+  - docs/phase2c_rowsplit_analysis.md
+  - .humanize/bitlesson.md
+
+artifact_files:
+  - benchmark.csv
+  - solutions.jsonl
+  - docs/benchmark_report.md
+  - docs/final_report.md
+
+latest_rlcr:
+  root: .humanize/rlcr
+  files:
+    - goal-tracker.md
+    - stop-state.md
+    - methodology-analysis-report.md
+    - round-*-review-result.md
+    - round-*-summary.md
+
+recent_globs:
+  - docs/*.md
+  - .humanize/rlcr/*/*.md
+  - .humanize/skill/*/*.md
+  - probes/*.py
+  - profile/**/*.md
+  - profile/**/*.txt
+  - solution/**/*.py
+
+monitor_guidance:
+  - The intended macro loop is 1 -> 2 -> 3 -> 2 -> 3. Phase 1 is first-cycle only.
+  - Every repeated cycle begins at Phase 2 using the previous Phase 3 NCU report and benchmark result.
+  - The final target is 1500 TFLOPS; each iteration should try to raise the accepted baseline by 50-100 TFLOPS.
+  - K/V dtype and intermediate precision are hard constraints, not optimization levers.
+  - If the Worker mentions FP4/NF4/INT8/INT4/quantized K/V or lowering softmax/intermediate precision, nudge it to revert/avoid that path immediately.
+  - The precision gate is stricter than a simple benchmark pass: do not accept speedup without strict correctness on the active candidate and unchanged validation tolerance.
+  - Do not accept a performance claim without correctness gates, benchmark.csv evidence, and an NCU REPORT.md.
+  - If the worker is waiting, nudge toward the next missing artifact for the current phase.
+  - For the current FMHA state, treat existing Phase 1/early Phase 2 docs as prior context and continue from the latest reviewed Phase 2/3 loop.

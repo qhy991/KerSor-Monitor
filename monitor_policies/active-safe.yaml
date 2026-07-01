@@ -1,0 +1,12 @@
+schema: monitor-policy/v1
+id: active-safe
+mode: active
+cooldown_seconds: 900
+require_idle: true
+actuation_enabled: true
+send_requires_cli_flag: true
+pane_capture_lines: 180
+file_tail_chars: 12000
+recent_file_limit: 80
+verdict_model: sonnet
+verdict_timeout_seconds: 300

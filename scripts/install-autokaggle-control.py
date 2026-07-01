@@ -276,6 +276,11 @@ nudge message itself to `tmux send-keys`; tmux can interpret words such as
 
 Enforce the recipe `1x phase1 + 3x phase2 + 3x phase3`; for repeated phase2/3,
 ask the worker to derive the next optimization direction from previous results.
+
+When the worker reaches a terminal state, run
+`./bin/akctl cleanup-panes --terminal --task <TASK_ID>` before ending the monitor
+loop. If asked to cancel the task, run `./bin/akctl stop-task <TASK_ID>` so the
+worker/monitor panes are removed while registry history is preserved.
 """
 
 
@@ -340,7 +345,7 @@ import skill_hub
 
 TMUX_FORMAT = "#{session_name}\t#{session_id}\t#{window_id}\t#{window_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}"
 IDENTITY_FIELDS = ("session_name", "session_id", "window_id", "window_name", "pane_id", "pane_pid", "current_command", "cwd")
-TERMINAL_STATES = {"promoted", "solution_validated", "abandoned", "crashed", "failed", "error", "smoke_ready", "smoke_failed"}
+TERMINAL_STATES = {"promoted", "solution_validated", "cancelled", "abandoned", "crashed", "failed", "error", "smoke_ready", "smoke_failed"}
 DEFAULT_MAX_ACTIVE_WORKERS = 24
 DEFAULT_MAX_PER_GPU_WORKERS = 3
 DEFAULT_MAX_STARTS_PER_TICK = 8
@@ -617,11 +622,11 @@ def task_status(record: dict) -> str:
     workspace = Path(record.get("workspace", ""))
     status_path = workspace / "status.json"
     if not status_path.is_file():
-        return "unknown"
+        return str(record.get("status") or "unknown")
     try:
         return str((json.loads(status_path.read_text()) or {}).get("state") or "unknown")
     except Exception:
-        return "unknown"
+        return str(record.get("status") or "unknown")
 
 
 def active_registry_records(registry: dict) -> list[dict]:
@@ -843,12 +848,14 @@ def orchestrator_loop_prompt(
     return f"""/loop every {interval_minutes} minutes: Run the AutoKaggle v2 scheduler tick deterministically.
 
 Each iteration, execute exactly this from {CONTROL_DIR}:
+./bin/akctl cleanup-panes --terminal
 ./bin/akctl patrol --config {config_path} --max-active {max_active} --max-per-gpu {max_per_gpu} --max-starts-per-tick {max_starts_per_tick} --monitor-mode {monitor_mode} --keep-going
+./bin/akctl cleanup-panes --terminal
 
 Then execute:
 ./bin/akctl status --config {config_path} --max-active {max_active} --max-per-gpu {max_per_gpu}
 
-Do not manually start workers, do not send worker nudges, and do not write Feishu. `akctl patrol` owns queue reconciliation, capacity checks, worker starts, and per-worker monitor starts. If patrol reports over_capacity, just print the status summary and wait for the next loop."""
+Do not manually start workers, do not send worker nudges, and do not write Feishu. `akctl patrol` owns queue reconciliation, capacity checks, worker starts, and per-worker monitor starts. If asked to stop a task, run `./bin/akctl stop-task <TASK_ID>` instead of leaving tmux panes behind. If asked to cancel or end this orchestrator loop, run `./bin/akctl stop-orchestrator` before exiting. If patrol reports over_capacity, just print the status summary and wait for the next loop."""
 
 
 def parse_identity(row: str) -> dict:
@@ -1013,7 +1020,8 @@ Each loop iteration:
 3. Use {role_model('monitor')} judgment to decide if the worker is progressing, stalled, bypassing required skills, violating GPU lock rules, or out of phase order.
 4. In shadow mode, never nudge. In active mode, paste the nudge text into the registry worker pane_id with `tmux load-buffer` + `tmux paste-buffer`, then submit it with a separate `tmux send-keys ... Enter`, and only when control.managed_by is v2 and control.read_only is false. Do not pass the nudge message itself to `tmux send-keys`; tmux can interpret words such as Enter, Space, Tab, or C-c as key names instead of text.
 5. Enforce 1x phase1 + 3x phase2 + 3x phase3. For repeated phase2/phase3, ask the worker to derive the next optimization direction from previous results; do not invent the optimization direction yourself.
-6. Keep looping until the worker reaches a terminal state such as promoted, abandoned, crashed, failed, or the registry entry is removed.
+6. Keep looping until the worker reaches a terminal state such as promoted, solution_validated, cancelled, abandoned, crashed, failed, or the registry entry is removed.
+7. When the task reaches a terminal state, run `./bin/akctl cleanup-panes --terminal --task {task_id}` so this worker/monitor window is removed from tmux while registry history is preserved. If asked to cancel this monitor loop, run the same cleanup command or `./bin/akctl stop-task {task_id}` before exiting.
 
 Monitor mode: {mode}. Use exactly one Claude Code loop for this task. The default cadence is every {interval} minutes; only run sooner when Claude Code itself detects an urgent stuck or safety condition."""
 
@@ -1028,6 +1036,8 @@ Cancel any existing Claude Code loop/cron job for this monitor session if one ex
 - collect deterministic evidence first
 - write observations/{task_id}.json
 - in active mode, nudge only the registry worker pane_id when necessary and safe
+- when the task reaches a terminal state, run `./bin/akctl cleanup-panes --terminal --task {task_id}`
+- if asked to cancel this monitor loop, run `./bin/akctl stop-task {task_id}` before exiting
 
 Monitor mode: {mode}. Do not create duplicate loop jobs."""
 
@@ -1080,7 +1090,7 @@ def start_orchestrator(args: argparse.Namespace | None = None, *, smoke: bool = 
         command = (
             f"claude --model {sh(role_model('orchestrator'))} "
             f"--permission-mode {sh(role_permission_mode('orchestrator'))} "
-            f"--name ak-v2-orchestrator {sh(prompt)}; bash"
+            f"--name ak-v2-orchestrator {sh(prompt)}"
         )
     identity = start_window(window, command)
     registry["orchestrator"] = {
@@ -1124,7 +1134,7 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
             env
             + f"claude --model {sh(role_model('worker'))} "
             + f"--permission-mode {sh(role_permission_mode('worker'))} "
-            + f"--name {sh(worker_window)} {sh(prompt)}; bash"
+            + f"--name {sh(worker_window)} {sh(prompt)}"
         )
     worker_identity = start_window(worker_window, worker_cmd, cwd=workspace)
     record = {
@@ -1150,7 +1160,7 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
         monitor_cmd = (
             f"claude --model {sh(role_model('monitor'))} "
             f"--permission-mode {sh(role_permission_mode('monitor'))} "
-            f"--name {sh(monitor_window)}; bash"
+            f"--name {sh(monitor_window)}"
         )
     monitor_identity = start_window(monitor_window, monitor_cmd)
     if not smoke:
@@ -1166,6 +1176,192 @@ def start_task(args: argparse.Namespace, *, smoke: bool = False) -> dict:
     }
     write_registry(registry)
     return registry["tasks"][task["id"]]
+
+
+def task_tmux_targets(task_id: str, record: dict) -> list[dict]:
+    targets = []
+    seen = set()
+    for role, default_window, identity in (
+        ("worker", f"worker-{task_id}", record.get("worker") or {}),
+        ("monitor", f"monitor-{task_id}", (record.get("monitor") or {}).get("worker") or {}),
+    ):
+        window = str(identity.get("window_name") or default_window)
+        if not window or window in seen:
+            continue
+        seen.add(window)
+        targets.append(
+            {
+                "role": role,
+                "window": window,
+                "target": f"{tmux_session()}:{window}",
+                "pane_id": identity.get("pane_id"),
+            }
+        )
+    return targets
+
+
+def kill_tmux_target(target: dict, *, dry_run: bool = False) -> dict:
+    item = dict(target)
+    if dry_run:
+        item["action"] = "would_kill"
+        return item
+    window = str(item.get("window") or "")
+    if not window:
+        item["action"] = "missing_window"
+        return item
+    if not tmux_window_exists(window):
+        item["action"] = "missing"
+        return item
+    if item.get("pane_id") and item.get("pane_id") == os.environ.get("TMUX_PANE"):
+        result = run(["tmux", "run-shell", "-b", f"sleep 1; tmux kill-window -t {sh(item['target'])}"], check=False)
+        item["action"] = "scheduled_kill" if result.returncode == 0 else "kill_failed"
+        if result.returncode != 0:
+            item["error"] = result.stderr.strip() or result.stdout.strip()
+        return item
+    result = run(["tmux", "kill-window", "-t", str(item["target"])], check=False)
+    item["action"] = "killed" if result.returncode == 0 else "kill_failed"
+    if result.returncode != 0:
+        item["error"] = result.stderr.strip() or result.stdout.strip()
+    return item
+
+
+def write_task_state(record: dict, state: str, reason: str) -> None:
+    record["status"] = state
+    record["status_reason"] = reason
+    record["updated_at"] = now_iso()
+    workspace = Path(record.get("workspace", ""))
+    if not workspace:
+        return
+    status_path = workspace / "status.json"
+    status = {}
+    if status_path.is_file():
+        try:
+            status = json.loads(status_path.read_text()) or {}
+        except Exception:
+            status = {}
+    status.update({"task_id": record.get("task_id"), "state": state, "reason": reason, "timestamp": now_iso()})
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    status_path.write_text(json.dumps(status, indent=2) + "\n")
+
+
+def cleanup_task_record(
+    task_id: str,
+    record: dict,
+    *,
+    reason: str,
+    dry_run: bool = False,
+    mark_cancelled: bool = False,
+    terminal_only: bool = False,
+) -> dict:
+    status = task_status(record)
+    if terminal_only and status not in TERMINAL_STATES:
+        return {"task": task_id, "status": status, "skipped": True, "reason": "not_terminal"}
+    if mark_cancelled and status not in TERMINAL_STATES and not dry_run:
+        write_task_state(record, "cancelled", reason)
+        status = "cancelled"
+    targets = task_tmux_targets(task_id, record)
+    actions = [kill_tmux_target(target, dry_run=dry_run) for target in targets]
+    result = {
+        "task": task_id,
+        "status": status,
+        "skipped": False,
+        "reason": reason,
+        "targets": actions,
+    }
+    if not dry_run:
+        record["cleanup"] = {
+            "cleaned_at": now_iso(),
+            "reason": reason,
+            "killed_windows": [item["window"] for item in actions if item.get("action") in {"killed", "scheduled_kill"}],
+            "killed_panes": [item["pane_id"] for item in actions if item.get("action") in {"killed", "scheduled_kill"} and item.get("pane_id")],
+            "targets": actions,
+        }
+    return result
+
+
+def run_cleanup_panes(args: argparse.Namespace) -> int:
+    if not args.terminal:
+        raise RuntimeError("cleanup-panes requires --terminal")
+    registry = load_registry()
+    tasks = registry.get("tasks") or {}
+    task_filter = args.task.upper() if args.task else None
+    cleaned = []
+    skipped = []
+    for task_id, record in sorted(tasks.items()):
+        if task_filter and task_id.upper() != task_filter:
+            continue
+        item = cleanup_task_record(task_id, record, reason="terminal_cleanup", dry_run=args.dry_run, terminal_only=True)
+        if item.get("skipped"):
+            skipped.append(item)
+        else:
+            cleaned.append(item)
+    if not args.dry_run:
+        write_registry(registry)
+    print(json.dumps({"ok": True, "dry_run": args.dry_run, "cleaned": cleaned, "skipped": skipped}, indent=2))
+    return 0
+
+
+def run_stop_task(args: argparse.Namespace) -> int:
+    registry = load_registry()
+    task_id = args.task.upper()
+    record = (registry.get("tasks") or {}).get(task_id)
+    if not record:
+        raise RuntimeError(f"task is not in v2 registry: {task_id}")
+    result = cleanup_task_record(task_id, record, reason=args.reason, dry_run=args.dry_run, mark_cancelled=True)
+    if not args.dry_run:
+        write_registry(registry)
+    print(json.dumps({"ok": True, "dry_run": args.dry_run, "stopped": result}, indent=2))
+    return 0
+
+
+def orchestrator_tmux_target(registry: dict) -> dict:
+    orchestrator = registry.get("orchestrator") or {}
+    identity = orchestrator.get("worker") or {}
+    window = str(identity.get("window_name") or orchestrator.get("window") or "orchestrator")
+    return {
+        "role": "orchestrator",
+        "window": window,
+        "target": f"{tmux_session()}:{window}",
+        "pane_id": identity.get("pane_id"),
+    }
+
+
+def stop_orchestrator_record(registry: dict, *, reason: str, dry_run: bool = False) -> dict:
+    target = orchestrator_tmux_target(registry)
+    action = kill_tmux_target(target, dry_run=dry_run)
+    if not dry_run:
+        orchestrator = registry.setdefault("orchestrator", {})
+        orchestrator["stopped_at"] = now_iso()
+        orchestrator["stop_reason"] = reason
+        orchestrator.pop("loop", None)
+        orchestrator["cleanup"] = {
+            "cleaned_at": now_iso(),
+            "reason": reason,
+            "killed_windows": [action["window"]] if action.get("action") in {"killed", "scheduled_kill"} else [],
+            "killed_panes": [action["pane_id"]] if action.get("action") in {"killed", "scheduled_kill"} and action.get("pane_id") else [],
+            "targets": [action],
+        }
+    return action
+
+
+def run_stop_orchestrator(args: argparse.Namespace) -> int:
+    registry = load_registry()
+    action = stop_orchestrator_record(registry, reason=args.reason, dry_run=args.dry_run)
+    if not args.dry_run:
+        write_registry(registry)
+    print(json.dumps({"ok": True, "dry_run": args.dry_run, "stopped": action}, indent=2))
+    return 0
+
+
+def run_stop_all(args: argparse.Namespace) -> int:
+    registry = load_registry()
+    tasks = registry.get("tasks") or {}
+    stopped = [cleanup_task_record(task_id, record, reason=args.reason, dry_run=args.dry_run, mark_cancelled=True) for task_id, record in sorted(tasks.items())]
+    orchestrator = stop_orchestrator_record(registry, reason=args.reason, dry_run=args.dry_run)
+    if not args.dry_run:
+        write_registry(registry)
+    print(json.dumps({"ok": True, "dry_run": args.dry_run, "orchestrator": orchestrator, "tasks": stopped}, indent=2))
+    return 0
 
 
 def start_monitor_loop(task_id: str, *, force: bool = False, retime: bool = False, interval_minutes: int | None = None) -> dict:
@@ -1537,6 +1733,28 @@ def build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--max-starts-per-tick", type=int, help="Maximum new workers per patrol. Default comes from config.json.")
     loop.add_argument("--monitor-mode", choices=("shadow", "active"), help="Monitor actuator mode. Default comes from config.json.")
     loop.set_defaults(func=run_loop)
+
+    cleanup = subparsers.add_parser("cleanup-panes")
+    cleanup.add_argument("--terminal", action="store_true", help="Clean only tasks whose status is terminal.")
+    cleanup.add_argument("--task", help="Restrict cleanup to one task id.")
+    cleanup.add_argument("--dry-run", action="store_true", help="Print panes/windows that would be killed.")
+    cleanup.set_defaults(func=run_cleanup_panes)
+
+    stop_task = subparsers.add_parser("stop-task")
+    stop_task.add_argument("task")
+    stop_task.add_argument("--reason", default="cancelled")
+    stop_task.add_argument("--dry-run", action="store_true", help="Print panes/windows that would be killed.")
+    stop_task.set_defaults(func=run_stop_task)
+
+    stop_orchestrator = subparsers.add_parser("stop-orchestrator")
+    stop_orchestrator.add_argument("--reason", default="cancelled")
+    stop_orchestrator.add_argument("--dry-run", action="store_true", help="Print panes/windows that would be killed.")
+    stop_orchestrator.set_defaults(func=run_stop_orchestrator)
+
+    stop_all = subparsers.add_parser("stop-all")
+    stop_all.add_argument("--reason", default="cancelled")
+    stop_all.add_argument("--dry-run", action="store_true", help="Print panes/windows that would be killed.")
+    stop_all.set_defaults(func=run_stop_all)
 
     start = subparsers.add_parser("start-task")
     start.add_argument("task")

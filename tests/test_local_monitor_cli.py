@@ -24,6 +24,16 @@ class LocalMonitorCliTests(unittest.TestCase):
         self.assertIn("observe-worker", help_text)
         self.assertIn("verdict-prompt", help_text)
         self.assertIn("actuate-worker", help_text)
+        self.assertIn("attach-existing-worker", help_text)
+        self.assertIn("generic-snapshot", help_text)
+        self.assertIn("generic-observe", help_text)
+        self.assertIn("generic-judge", help_text)
+        self.assertIn("generic-actuate", help_text)
+        self.assertIn("generic-remote-deploy", help_text)
+        self.assertIn("generic-remote-once", help_text)
+        self.assertIn("generic-remote-start", help_text)
+        self.assertIn("generic-remote-stop", help_text)
+        self.assertIn("generic-remote-status", help_text)
 
 
 if __name__ == "__main__":

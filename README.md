@@ -120,6 +120,67 @@ python3 scripts/local-monitor.py verdict-prompt observation.json
 python3 scripts/local-monitor.py actuate-worker --observation observation.json --verdict verdict.json --mode active --send
 ```
 
+### Generic Worker/Monitor control — arbitrary tmux task flows
+
+The generic control layer keeps the same role split but removes the
+AutoKaggle/SOL-ExecBench assumption. A `TaskFlow` describes a workflow, a
+`Worker` is a running tmux-backed instance, a `Monitor` observes and optionally
+nudges that Worker, and the `Orchestrator` registers or later starts Workers.
+For Verda FMHA, the live control loop runs as a Remote Monitor on Verda; the
+local CLI deploys, starts, and checks that remote loop.
+
+First adapter: Verda's FlashInfer FMHA Phase 2C workflow.
+
+The Verda FMHA workflow encodes a `1 -> 2 -> 3 -> 2 -> 3` loop: Phase 1 maps
+the operator to hardware once, Phase 2 designs the next pipeline/shared
+memory/register/TMEM layout from the previous profile, and Phase 3 implements,
+benchmarks, and produces an NCU report for the next iteration. The long target
+is 1500 TFLOPS, with accepted iterations expected to ratchet the baseline by
+roughly 50-100 TFLOPS.
+
+For this FMHA flow, K/V dtype and intermediate precision are hard constraints:
+K/V stay bf16, softmax/accumulator/correction precision must not be lowered, and
+precision gates may only become stricter. The Remote Monitor should correct any
+FP4/NF4/INT8/INT4/quantized-KV or tolerance-relaxing proposal.
+
+```bash
+# Local registry only; does not write to Verda.
+python3 scripts/local-monitor.py attach-existing-worker verda-fmha-phase2c --write-local
+
+# Read-only live observation over SSH.
+python3 scripts/local-monitor.py generic-snapshot --format table
+python3 scripts/local-monitor.py generic-observe verda-fmha-phase2c \
+  --output outputs/generic-monitor/verda-fmha-phase2c/observation.json
+
+# Build or run the monitor judge. Prompt-only does not call a model.
+python3 scripts/local-monitor.py generic-judge verda-fmha-phase2c --prompt-only
+
+# Actuation defaults to dry-run. It prints the safe tmux paste command/no-op.
+python3 scripts/local-monitor.py generic-actuate \
+  --observation observation.json \
+  --verdict verdict.json
+
+# Remote Monitor deployment for the live Verda FMHA loop.
+python3 scripts/local-monitor.py generic-remote-deploy verda-fmha-phase2c
+python3 scripts/local-monitor.py generic-remote-once verda-fmha-phase2c
+python3 scripts/local-monitor.py generic-remote-start verda-fmha-phase2c --interval 300 --send
+python3 scripts/local-monitor.py generic-remote-stop verda-fmha-phase2c
+python3 scripts/local-monitor.py generic-remote-status verda-fmha-phase2c
+```
+
+See `docs/worker-monitor-architecture.md` for the generic schema and safety
+rules. The example config is `config/generic-workers.verda-fmha.example.yaml`.
+No generic command sends text to a Worker pane unless `--send` is explicitly
+passed and the policy safety gates pass. For Verda FMHA, live nudges should come
+from the Remote Monitor running in `newkw:monitor-fmha`, not directly from the
+local CLI.
+
+For AutoKaggle v2 cleanup, use `./bin/akctl cleanup-panes --terminal` to remove
+finished worker/monitor windows while keeping registry history. Use
+`./bin/akctl stop-task <TASK_ID>` for a cancelled task and `./bin/akctl
+stop-orchestrator` when ending the orchestrator loop. These commands kill only
+the registered windows, not the whole tmux session.
+
 ### `/telemetry` — Optional OpenTelemetry worker capture
 
 ```bash

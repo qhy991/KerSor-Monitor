@@ -210,6 +210,82 @@ class InstallAutokaggleControlTests(unittest.TestCase):
         self.assertEqual(patrol_data["would_start"], [{"task": "T-001", "gpu": 0, "slot": 0, "monitor_mode": "active"}])
         self.assertEqual(patrol_data["started"], [])
 
+    def test_generated_akctl_cleanup_and_stop_preserve_registry_history(self) -> None:
+        installer = load_installer_module()
+        root = self.make_root()
+        control = root / "control-v2"
+        bin_dir = control / "bin"
+        workspace = control / "workspaces" / "T-001__foo1"
+        fake_bin = root / "fake-bin"
+        control.mkdir(parents=True)
+        bin_dir.mkdir()
+        workspace.mkdir(parents=True)
+        fake_bin.mkdir()
+        sol_root = root / "SOL-ExecBench"
+        (sol_root / "data" / "benchmark" / "L1" / "foo1").mkdir(parents=True)
+        (control / "tasks.yaml").write_text(
+            yaml.safe_dump({"groups": [{"name": "L1", "tasks": [{"id": "T-001", "problem_dir": "L1/foo1"}]}]})
+        )
+        (control / "config.json").write_text(
+            json.dumps({"paths": {"remote_root": str(root), "sol_root": str(sol_root), "tmux_session": "ak-v2"}})
+        )
+        (workspace / "status.json").write_text(json.dumps({"task_id": "T-001", "state": "running"}))
+        (control / "registry.json").write_text(
+            json.dumps(
+                {
+                    "schema": "autokaggle-control-v2",
+                    "tasks": {
+                        "T-001": {
+                            "task_id": "T-001",
+                            "workspace": str(workspace),
+                            "worker": {"window_name": "worker-T-001", "pane_id": "%1"},
+                            "monitor": {"worker": {"window_name": "monitor-T-001", "pane_id": "%2"}},
+                        }
+                    },
+                    "orchestrator": {"window": "orchestrator", "worker": {"window_name": "orchestrator", "pane_id": "%3"}},
+                }
+            )
+        )
+        (bin_dir / "skill_hub.py").write_text((Path(__file__).resolve().parents[1] / "scripts" / "skill_hub.py").read_text())
+        akctl = bin_dir / "akctl"
+        akctl.write_text(installer.build_akctl_script())
+        akctl.chmod(0o755)
+        tmux_log = root / "tmux.log"
+        tmux = fake_bin / "tmux"
+        tmux.write_text(
+            "#!/usr/bin/env bash\n"
+            f"echo \"$@\" >> {tmux_log}\n"
+            "case \"$1\" in\n"
+            "  has-session) exit 0 ;;\n"
+            "  list-windows) printf 'worker-T-001\\nmonitor-T-001\\norchestrator\\n'; exit 0 ;;\n"
+            "  kill-window) exit 0 ;;\n"
+            "  *) exit 0 ;;\n"
+            "esac\n"
+        )
+        tmux.chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+
+        stopped = subprocess.run([sys.executable, str(akctl), "stop-task", "T-001"], capture_output=True, text=True, env=env)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr + stopped.stdout)
+        self.assertEqual(json.loads((workspace / "status.json").read_text())["state"], "cancelled")
+        registry = json.loads((control / "registry.json").read_text())
+        cleanup = registry["tasks"]["T-001"]["cleanup"]
+        self.assertEqual(cleanup["killed_windows"], ["worker-T-001", "monitor-T-001"])
+        self.assertIn("kill-window -t ak-v2:worker-T-001", tmux_log.read_text())
+
+        (workspace / "status.json").write_text(json.dumps({"task_id": "T-001", "state": "promoted"}))
+        terminal_preview = subprocess.run(
+            [sys.executable, str(akctl), "cleanup-panes", "--terminal", "--task", "T-001", "--dry-run"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(terminal_preview.returncode, 0, terminal_preview.stderr + terminal_preview.stdout)
+        preview = json.loads(terminal_preview.stdout)
+        self.assertEqual(preview["cleaned"][0]["targets"][0]["action"], "would_kill")
+        self.assertEqual(json.loads((workspace / "status.json").read_text())["state"], "promoted")
+
     def test_generated_akctl_records_complete_tmux_identity_fields(self) -> None:
         installer = load_installer_module()
         script = installer.build_akctl_script()
@@ -240,6 +316,12 @@ class InstallAutokaggleControlTests(unittest.TestCase):
         self.assertIn("def run_loop", script)
         self.assertIn("max_starts_per_tick", script)
         self.assertIn("orchestrator_loop_prompt", script)
+        self.assertIn("cleanup-panes", script)
+        self.assertIn("stop-task", script)
+        self.assertIn("stop-orchestrator", script)
+        self.assertIn("stop-all", script)
+        self.assertIn("cancelled", script)
+        self.assertIn("./bin/akctl cleanup-panes --terminal", script)
         self.assertIn("legacy_workspace", script)
         self.assertIn("registry.pop(\"orchestrator\", None)", script)
         self.assertIn("normalize_config", script)

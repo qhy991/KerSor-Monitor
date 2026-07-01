@@ -20,6 +20,17 @@ The user invokes you as `/local-monitor [action] [args...]`:
 - `/local-monitor observe-worker <task_id> --pane-id <pane_id>` - collect one worker observation JSON
 - `/local-monitor verdict-prompt <observation.json>` - build the sonnet monitor verdict prompt
 - `/local-monitor actuate-worker --observation <observation.json> --verdict <verdict.json>` - optionally nudge a worker pane
+- `/local-monitor attach-existing-worker <worker_id>` - register an already-running generic Worker in the local registry
+- `/local-monitor generic-snapshot` - collect read-only generic Worker observations
+- `/local-monitor generic-observe <worker_id>` - collect one generic Worker observation JSON
+- `/local-monitor generic-judge <worker_id>` - build or run the generic Monitor verdict
+- `/local-monitor generic-actuate --observation <observation.json> --verdict <verdict.json>` - dry-run or explicitly send a generic nudge
+- `/local-monitor generic-loop` - run generic observe -> judge -> dry-run/send loop
+- `/local-monitor generic-remote-deploy <worker_id>` - deploy a Remote Monitor bundle to the worker host
+- `/local-monitor generic-remote-once <worker_id>` - run one Remote Monitor iteration over SSH, no-send by default
+- `/local-monitor generic-remote-start <worker_id>` - start the Remote Monitor loop in tmux
+- `/local-monitor generic-remote-stop <worker_id>` - stop the Remote Monitor tmux window without touching the Worker pane
+- `/local-monitor generic-remote-status <worker_id>` - read Remote Monitor tmux/state/log status
 
 Parse the action from `$ARGUMENTS`. Use `config/local-monitor.yaml` unless the
 user provided a different config path.
@@ -80,7 +91,45 @@ python3 scripts/local-monitor.py verdict-prompt observation.json --output verdic
 
 # active worker nudge
 python3 scripts/local-monitor.py actuate-worker --config config/local-monitor.yaml --observation observation.json --verdict verdict.json --mode active --send
+
+# generic Worker/Monitor adapter. Uses config/generic-workers.verda-fmha.example.yaml by default.
+python3 scripts/local-monitor.py attach-existing-worker verda-fmha-phase2c --write-local
+python3 scripts/local-monitor.py generic-snapshot --format table
+python3 scripts/local-monitor.py generic-observe verda-fmha-phase2c --output observation.json
+python3 scripts/local-monitor.py generic-judge verda-fmha-phase2c --prompt-only
+python3 scripts/local-monitor.py generic-actuate --observation observation.json --verdict verdict.json
+python3 scripts/local-monitor.py generic-remote-deploy verda-fmha-phase2c
+python3 scripts/local-monitor.py generic-remote-once verda-fmha-phase2c
+python3 scripts/local-monitor.py generic-remote-start verda-fmha-phase2c --interval 300 --send
+python3 scripts/local-monitor.py generic-remote-stop verda-fmha-phase2c
+python3 scripts/local-monitor.py generic-remote-status verda-fmha-phase2c
 ```
+
+## Generic FMHA Iteration Contract
+
+For `verda-fmha-phase2c`, the TaskFlow encodes this loop:
+
+```text
+first cycle: phase1 -> phase2 -> phase3
+repeat:      phase2 -> phase3 -> phase2 -> phase3 -> ...
+target:      1500 TFLOPS, increasing the accepted baseline by about 50-100 TFLOPS per accepted iteration
+handoff:     every phase3 must produce benchmark.csv + solutions.jsonl + an NCU REPORT.md for the next phase2
+```
+
+Phase 1 maps the operator flow to hardware units. Later iterations skip Phase 1.
+Phase 2 designs pipeline, shared-memory, register, and TMEM layout from the
+previous profile. Phase 3 implements, validates, benchmarks, and profiles.
+
+Precision contract for this flow:
+
+- K/V dtype stays bf16; no FP4/NF4/INT8/INT4/quantized or packed K/V.
+- Intermediate precision for softmax, running m/l, accumulators, correction, and
+  rescale paths must not be lowered for speed.
+- Precision gates may only become stricter. Do not relax tolerance or remove
+  validation cases.
+- If the Worker proposes or implements a forbidden precision change, the Remote
+  Monitor should nudge to revert/avoid it before giving other optimization
+  advice.
 
 ## Safety Rules
 
@@ -103,6 +152,14 @@ python3 scripts/local-monitor.py actuate-worker --config config/local-monitor.ya
 - Worker nudges must go through `tmux send-keys -t <pane_id>` only after a
   sonnet verdict, only in `active` mode, and only when `managed_by=v2` and
   `read_only=false`.
+- Generic Worker nudges are also opt-in: default is dry-run, `--send` is
+  required for a live paste, pane identity must match, and the Worker must look
+  idle when the policy requires idle.
+- For Verda FMHA, keep the live nudge loop on the Remote Monitor pane
+  `newkw:monitor-fmha`. The Local Monitor may deploy, start, and inspect it, but
+  should not replace it with a local `generic-loop --send`. Use
+  `generic-remote-stop` to stop only that monitor window; do not kill the Worker
+  pane for externally managed Workers.
 - Legacy workers imported from `tasks.json` / `monitor/state/bindings.tsv` must
   stay `managed_by=legacy` and `read_only=true`.
 - Worker registry entries must preserve `session_name`, `session_id`,

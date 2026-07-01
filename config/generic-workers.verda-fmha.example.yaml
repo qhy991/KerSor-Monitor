@@ -1,0 +1,32 @@
+schema: worker-control/v1
+output_dir: outputs/generic-monitor
+ssh_options: ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+
+flows:
+  - ../flows/flashinfer-fmha-phase2c.yaml
+
+monitor_policies:
+  - ../monitor_policies/active-safe.yaml
+
+verdict_runner:
+  command: claude
+  model: sonnet
+  permission_mode: plan
+  timeout_seconds: 300
+
+workers:
+  - id: verda-fmha-phase2c
+    name: Verda FMHA Phase 2C Worker
+    flow: flashinfer-fmha-phase2c
+    monitor_policy: active-safe
+    ssh_host: verda
+    remote_root: /home/Agent-lsh/repo/newWorkflow/fmha
+    tmux_target: "%0"
+    pane_id: "%0"
+    remote_monitor_dir: /home/Agent-lsh/.local/share/kda-monitor/verda-fmha-phase2c
+    monitor_tmux_session: newkw
+    monitor_window: monitor-fmha
+    attach_mode: existing
+    managed_by: external
+    read_only: false
+    actuation_enabled: true

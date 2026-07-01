@@ -10,6 +10,25 @@ import sys
 import time
 from pathlib import Path
 
+from generic_control import (
+    DEFAULT_GENERIC_CONFIG,
+    attach_existing_worker,
+    build_generic_actuation,
+    build_generic_remote_monitor_once_command,
+    build_generic_verdict_prompt,
+    collect_generic_observation,
+    collect_generic_remote_monitor_status,
+    collect_generic_snapshot,
+    deploy_generic_remote_monitor,
+    load_generic_config,
+    print_generic_snapshot_summary,
+    run_generic_verdict,
+    send_generic_actuation,
+    start_generic_remote_monitor,
+    stop_generic_remote_monitor,
+    validate_generic_verdict,
+    write_json_artifact,
+)
 from monitor_state import (
     blank_record_ids_from_payload,
     build_feishu_rows,
@@ -399,7 +418,9 @@ def run_send_orchestrator(args: argparse.Namespace) -> int:
 
 def write_or_print(text: str, output: str | None) -> None:
     if output:
-        Path(output).write_text(text)
+        path = Path(output)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
         print(f"Wrote {output}")
     else:
         print(text)
@@ -482,11 +503,198 @@ def run_loop(args: argparse.Namespace) -> int:
         time.sleep(interval)
 
 
+def load_generic_json(path: str | Path) -> dict:
+    return json.loads(Path(path).read_text())
+
+
+def write_or_print_json(payload: dict, output: str | None) -> None:
+    write_or_print(json.dumps(payload, indent=2, ensure_ascii=False), output)
+
+
+def run_attach_existing_worker(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    record = attach_existing_worker(config, args.worker_id, write_local=args.write_local)
+    write_or_print_json(record, args.output)
+    return 0
+
+
+def run_generic_snapshot(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    worker_ids = args.worker_id or None
+    snapshot = collect_generic_snapshot(config, worker_ids=worker_ids)
+    if args.write_local:
+        for observation in snapshot.get("workers") or []:
+            worker_id = ((observation.get("worker") or {}).get("id") or "unknown")
+            path = write_json_artifact(config, worker_id, "observations", observation)
+            print(f"Wrote {path}")
+    if args.format == "json":
+        write_or_print_json(snapshot, args.output)
+    else:
+        print_generic_snapshot_summary(snapshot)
+    return 0 if all(obs.get("reachable") for obs in snapshot.get("workers", [])) else 1
+
+
+def run_generic_observe(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    observation = collect_generic_observation(config, args.worker_id)
+    if args.write_local:
+        path = write_json_artifact(config, args.worker_id, "observations", observation)
+        print(f"Wrote {path}")
+    write_or_print_json(observation, args.output)
+    return 0 if observation.get("reachable") else 1
+
+
+def run_generic_verdict_prompt(args: argparse.Namespace) -> int:
+    observation = load_generic_json(args.observation)
+    prompt = build_generic_verdict_prompt(observation)
+    write_or_print(prompt, args.output)
+    return 0
+
+
+def run_generic_judge(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    if args.observation:
+        observation = load_generic_json(args.observation)
+    else:
+        observation = collect_generic_observation(config, args.worker_id)
+        if args.write_local:
+            path = write_json_artifact(config, args.worker_id, "observations", observation)
+            print(f"Wrote {path}")
+    if args.prompt_only:
+        write_or_print(build_generic_verdict_prompt(observation), args.output)
+        return 0 if observation.get("reachable", True) else 1
+    verdict = run_generic_verdict(config, observation)
+    verdict = validate_generic_verdict(verdict)
+    if args.write_local:
+        worker_id = ((observation.get("worker") or {}).get("id") or args.worker_id)
+        path = write_json_artifact(config, worker_id, "verdicts", verdict)
+        print(f"Wrote {path}")
+    write_or_print_json(verdict, args.output)
+    return 0
+
+
+def run_generic_actuate(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    observation = load_generic_json(args.observation)
+    verdict = validate_generic_verdict(load_generic_json(args.verdict))
+    action = build_generic_actuation(config, observation, verdict, send=args.send)
+    if args.output:
+        write_or_print_json(action, args.output)
+    if args.write_local:
+        worker_id = ((observation.get("worker") or {}).get("id") or "unknown")
+        path = write_json_artifact(config, worker_id, "actuations", action)
+        print(f"Wrote {path}")
+    return send_generic_actuation(action)
+
+
+def run_generic_loop(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    worker_ids = args.worker_id or [worker["id"] for worker in config["workers"]]
+    interval = args.interval
+    print(f"Entering generic monitor loop; workers={','.join(worker_ids)} interval={interval}s send={args.send}")
+    while True:
+        failures = 0
+        for worker_id in worker_ids:
+            observation = collect_generic_observation(config, worker_id)
+            if args.write_local:
+                path = write_json_artifact(config, worker_id, "observations", observation)
+                print(f"Wrote {path}")
+            if not observation.get("reachable"):
+                failures += 1
+                print(f"{worker_id}: observation failed: {observation.get('errors')}", file=sys.stderr)
+                continue
+            if args.prompt_only:
+                print(build_generic_verdict_prompt(observation))
+                continue
+            verdict = validate_generic_verdict(run_generic_verdict(config, observation))
+            action = build_generic_actuation(config, observation, verdict, send=args.send)
+            if args.write_local:
+                verdict_path = write_json_artifact(config, worker_id, "verdicts", verdict)
+                action_path = write_json_artifact(config, worker_id, "actuations", action)
+                print(f"Wrote {verdict_path}")
+                print(f"Wrote {action_path}")
+            print(f"{worker_id}: {verdict['activity']} next={verdict['required_next_step']} action={action['reason']}")
+            rc = send_generic_actuation(action)
+            if rc != 0:
+                failures += 1
+        if args.once:
+            return 0 if failures == 0 else 1
+        time.sleep(interval)
+
+
+def run_generic_remote_deploy(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    result = deploy_generic_remote_monitor(config, args.worker_id, remote_dir=args.remote_dir)
+    write_or_print_json(result, args.output)
+    return 0
+
+
+def run_generic_remote_once(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    cmd = build_generic_remote_monitor_once_command(
+        config,
+        args.worker_id,
+        remote_dir=args.remote_dir,
+        send=args.send,
+    )
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
+    except subprocess.TimeoutExpired:
+        print(f"ERROR: remote monitor once timed out after {args.timeout}s", file=sys.stderr)
+        return 124
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    return result.returncode
+
+
+def run_generic_remote_start(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    result = start_generic_remote_monitor(
+        config,
+        args.worker_id,
+        remote_dir=args.remote_dir,
+        interval=args.interval,
+        send=args.send,
+        restart=args.restart,
+    )
+    write_or_print_json(result, args.output)
+    return 0 if result.get("started") else 1
+
+
+def run_generic_remote_status(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    status = collect_generic_remote_monitor_status(config, args.worker_id, remote_dir=args.remote_dir)
+    write_or_print_json(status, args.output)
+    return 0 if status.get("reachable") else 1
+
+
+def run_generic_remote_stop(args: argparse.Namespace) -> int:
+    config = load_generic_config(args.config)
+    result = stop_generic_remote_monitor(
+        config,
+        args.worker_id,
+        remote_dir=args.remote_dir,
+        dry_run=args.dry_run,
+    )
+    write_or_print_json(result, args.output)
+    return 0
+
+
 def add_config_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config",
         default=str(DEFAULT_CONFIG),
         help=f"Local monitor config path (default: {DEFAULT_CONFIG})",
+    )
+
+
+def add_generic_config_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config",
+        default=str(DEFAULT_GENERIC_CONFIG),
+        help=f"Generic worker config path (default: {DEFAULT_GENERIC_CONFIG})",
     )
 
 
@@ -572,6 +780,119 @@ def build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--write", action="store_true", help="Write to Feishu each iteration. Default is dry-run.")
     loop.add_argument("--once", action="store_true", help="Run one iteration, useful for smoke tests.")
     loop.set_defaults(func=run_loop)
+
+    attach = subparsers.add_parser(
+        "attach-existing-worker",
+        help="Register an already-running generic worker in the local registry.",
+    )
+    add_generic_config_arg(attach)
+    attach.add_argument("worker_id", help="Worker id from the generic config.")
+    attach.add_argument("--write-local", action="store_true", help="Write outputs/generic-monitor/registry.json. No remote writes.")
+    attach.add_argument("--output", help="Write the registry record JSON to this path.")
+    attach.set_defaults(func=run_attach_existing_worker)
+
+    generic_snapshot = subparsers.add_parser("generic-snapshot", help="Collect read-only observations for generic workers.")
+    add_generic_config_arg(generic_snapshot)
+    generic_snapshot.add_argument("worker_id", nargs="*", help="Optional worker id filter.")
+    generic_snapshot.add_argument("--format", choices=("table", "json"), default="table")
+    generic_snapshot.add_argument("--write-local", action="store_true", help="Write local observation artifacts under outputs/.")
+    generic_snapshot.add_argument("--output", help="Write JSON output to this path when --format=json.")
+    generic_snapshot.set_defaults(func=run_generic_snapshot)
+
+    generic_observe = subparsers.add_parser("generic-observe", help="Collect one generic worker observation JSON.")
+    add_generic_config_arg(generic_observe)
+    generic_observe.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_observe.add_argument("--write-local", action="store_true", help="Write local observation artifact under outputs/.")
+    generic_observe.add_argument("--output", help="Write observation JSON to this path.")
+    generic_observe.set_defaults(func=run_generic_observe)
+
+    generic_prompt = subparsers.add_parser("generic-verdict-prompt", help="Build a generic monitor verdict prompt.")
+    generic_prompt.add_argument("observation", help="Observation JSON file.")
+    generic_prompt.add_argument("--output", help="Write prompt to this path instead of stdout.")
+    generic_prompt.set_defaults(func=run_generic_verdict_prompt)
+
+    generic_judge = subparsers.add_parser("generic-judge", help="Run the generic monitor judge for one worker.")
+    add_generic_config_arg(generic_judge)
+    generic_judge.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_judge.add_argument("--observation", help="Use an existing observation JSON instead of collecting live.")
+    generic_judge.add_argument("--prompt-only", action="store_true", help="Build the prompt without calling the verdict runner.")
+    generic_judge.add_argument("--write-local", action="store_true", help="Write local observation/verdict artifacts under outputs/.")
+    generic_judge.add_argument("--output", help="Write verdict JSON or prompt text to this path.")
+    generic_judge.set_defaults(func=run_generic_judge)
+
+    generic_actuate = subparsers.add_parser("generic-actuate", help="Dry-run or send a generic monitor nudge.")
+    add_generic_config_arg(generic_actuate)
+    generic_actuate.add_argument("--observation", required=True, help="Observation JSON file.")
+    generic_actuate.add_argument("--verdict", required=True, help="Verdict JSON file.")
+    generic_actuate.add_argument("--send", action="store_true", help="Actually paste the nudge into tmux. Default is dry-run.")
+    generic_actuate.add_argument("--write-local", action="store_true", help="Write local actuation artifact under outputs/.")
+    generic_actuate.add_argument("--output", help="Write actuation JSON to this path.")
+    generic_actuate.set_defaults(func=run_generic_actuate)
+
+    generic_loop = subparsers.add_parser("generic-loop", help="Run observe -> judge -> dry-run/send for generic workers.")
+    add_generic_config_arg(generic_loop)
+    generic_loop.add_argument("worker_id", nargs="*", help="Optional worker id filter. Defaults to all workers.")
+    generic_loop.add_argument("--interval", type=int, default=300, help="Seconds between iterations.")
+    generic_loop.add_argument("--once", action="store_true", help="Run one iteration.")
+    generic_loop.add_argument("--prompt-only", action="store_true", help="Build prompts without calling the verdict runner.")
+    generic_loop.add_argument("--write-local", action="store_true", help="Write local artifacts under outputs/.")
+    generic_loop.add_argument("--send", action="store_true", help="Actually paste eligible nudges into tmux. Default is dry-run.")
+    generic_loop.set_defaults(func=run_generic_loop)
+
+    generic_remote_deploy = subparsers.add_parser(
+        "generic-remote-deploy",
+        help="Deploy the generic remote Monitor bundle to the worker host.",
+    )
+    add_generic_config_arg(generic_remote_deploy)
+    generic_remote_deploy.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_remote_deploy.add_argument("--remote-dir", help="Override remote monitor directory.")
+    generic_remote_deploy.add_argument("--output", help="Write deploy JSON to this path.")
+    generic_remote_deploy.set_defaults(func=run_generic_remote_deploy)
+
+    generic_remote_once = subparsers.add_parser(
+        "generic-remote-once",
+        help="Run one remote Monitor iteration over SSH. Default is no-send dry-run.",
+    )
+    add_generic_config_arg(generic_remote_once)
+    generic_remote_once.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_remote_once.add_argument("--remote-dir", help="Override remote monitor directory.")
+    generic_remote_once.add_argument("--send", action="store_true", help="Allow this one remote iteration to send an eligible nudge.")
+    generic_remote_once.add_argument("--timeout", type=int, default=240, help="SSH command timeout in seconds.")
+    generic_remote_once.set_defaults(func=run_generic_remote_once)
+
+    generic_remote_start = subparsers.add_parser(
+        "generic-remote-start",
+        help="Start the generic remote Monitor loop in the configured tmux session.",
+    )
+    add_generic_config_arg(generic_remote_start)
+    generic_remote_start.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_remote_start.add_argument("--remote-dir", help="Override remote monitor directory.")
+    generic_remote_start.add_argument("--interval", type=int, default=300, help="Seconds between remote monitor iterations.")
+    generic_remote_start.add_argument("--send", action="store_true", help="Allow the remote Monitor loop to send eligible nudges.")
+    generic_remote_start.add_argument("--restart", action="store_true", help="Kill an existing monitor window before starting.")
+    generic_remote_start.add_argument("--output", help="Write start JSON to this path.")
+    generic_remote_start.set_defaults(func=run_generic_remote_start)
+
+    generic_remote_stop = subparsers.add_parser(
+        "generic-remote-stop",
+        help="Stop the generic remote Monitor tmux window without touching the Worker pane.",
+    )
+    add_generic_config_arg(generic_remote_stop)
+    generic_remote_stop.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_remote_stop.add_argument("--remote-dir", help="Override remote monitor directory.")
+    generic_remote_stop.add_argument("--dry-run", action="store_true", help="Print the remote tmux kill command without running it.")
+    generic_remote_stop.add_argument("--output", help="Write stop JSON to this path.")
+    generic_remote_stop.set_defaults(func=run_generic_remote_stop)
+
+    generic_remote_status = subparsers.add_parser(
+        "generic-remote-status",
+        help="Read remote Monitor tmux/state/log status.",
+    )
+    add_generic_config_arg(generic_remote_status)
+    generic_remote_status.add_argument("worker_id", help="Worker id from the generic config.")
+    generic_remote_status.add_argument("--remote-dir", help="Override remote monitor directory.")
+    generic_remote_status.add_argument("--output", help="Write status JSON to this path.")
+    generic_remote_status.set_defaults(func=run_generic_remote_status)
 
     return parser
 

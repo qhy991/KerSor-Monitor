@@ -450,7 +450,7 @@ class MonitorStateTests(unittest.TestCase):
         self.assertIn("no_workspace", status_options)
         self.assertIn("phase1_complete", status_options)
         self.assertIn("legacy_running", status_options)
-        self.assertLess({"no_workspace", "starting", "phase1_complete", "legacy_running"}, FEISHU_STATUS_OPTIONS)
+        self.assertLess({"no_workspace", "starting", "phase1_complete", "cancelled", "legacy_running"}, FEISHU_STATUS_OPTIONS)
 
         old_status_payload = {
             "data": {
