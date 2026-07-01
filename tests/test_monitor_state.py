@@ -165,6 +165,122 @@ class MonitorStateTests(unittest.TestCase):
         self.assertIsNone(rows[0]["Speedup"])
         self.assertIsNone(rows[0][FEISHU_LATENCY_FIELD])
 
+    def test_v2_status_reference_speedup_is_used(self) -> None:
+        root = self.make_infra()
+        workspace = root / "workspaces" / "L1-043__043_mla_fused_qkv_rope_split"
+        workspace.mkdir(parents=True)
+        (workspace / "status.json").write_text(
+            json.dumps(
+                {
+                    "state": "promoted",
+                    "best_latency_ms": 0.148,
+                    "final_result": {
+                        "latency_ms": 0.148,
+                        "speedup_vs_reference": 97.8,
+                    },
+                    "timestamp": "2026-06-30T00:00:00Z",
+                }
+            )
+        )
+        (workspace / "benchmark.csv").write_text(
+            "\n".join(
+                [
+                    "timestamp,phase,iteration,candidate,workloads,correct,latency_ms,speedup,notes",
+                    "2026-06-30T00:10:00Z,phase3,3,candidate,16,16,0.148,,98x vs reference",
+                ]
+            )
+            + "\n"
+        )
+
+        rows = build_feishu_rows(build_local_snapshot(root), task_filter="L1-043")
+
+        self.assertEqual(rows[0]["Speedup"], 97.8)
+        self.assertEqual(rows[0][FEISHU_LATENCY_FIELD], 0.148)
+
+    def test_v2_final_gmean_speedup_beats_later_benchmark_attempts(self) -> None:
+        root = self.make_infra()
+        workspace = root / "workspaces" / "L1-043__043_mla_fused_qkv_rope_split"
+        workspace.mkdir(parents=True)
+        (workspace / "status.json").write_text(
+            json.dumps(
+                {
+                    "state": "promoted",
+                    "final_result": {
+                        "latency_ms": 1.244,
+                        "gmean_speedup": 1.006,
+                    },
+                    "timestamp": "2026-06-30T00:00:00Z",
+                }
+            )
+        )
+        (workspace / "benchmark.csv").write_text(
+            "\n".join(
+                [
+                    "timestamp,phase,iteration,candidate,workloads,correct,latency_ms,speedup,notes",
+                    "2026-06-30T00:10:00Z,phase3,1,candidate_good,16,16,1.244,1.01,final best",
+                    "2026-06-30T00:20:00Z,phase3,2,candidate_bad,16,16,20.211,0.06,later failed attempt",
+                ]
+            )
+            + "\n"
+        )
+
+        rows = build_feishu_rows(build_local_snapshot(root), task_filter="L1-043")
+
+        self.assertEqual(rows[0]["Speedup"], 1.006)
+        self.assertEqual(rows[0][FEISHU_LATENCY_FIELD], 1.244)
+
+    def test_v2_status_phase_speedup_beats_approximate_benchmark_fallback(self) -> None:
+        root = self.make_infra()
+        workspace = root / "workspaces" / "L1-043__043_mla_fused_qkv_rope_split"
+        workspace.mkdir(parents=True)
+        (workspace / "status.json").write_text(
+            json.dumps(
+                {
+                    "state": "solution_validated",
+                    "phase2": {"speedup_vs_v1": "1.41x", "latency_avg_ms": 1.5},
+                    "phase3": {"speedup_vs_v1": "1.77x", "latency_avg_ms": 1.2},
+                    "timestamp": "2026-06-30T00:00:00Z",
+                }
+            )
+        )
+        (workspace / "benchmark.csv").write_text(
+            "\n".join(
+                [
+                    "timestamp,phase,iteration,candidate,workloads,correct,latency_ms,speedup,notes",
+                    "2026-06-30T00:10:00Z,phase3,3,candidate,16,16,1.2,~4.4x,fallback value",
+                ]
+            )
+            + "\n"
+        )
+
+        rows = build_feishu_rows(build_local_snapshot(root), task_filter="L1-043")
+
+        self.assertEqual(rows[0]["Speedup"], 1.77)
+        self.assertEqual(rows[0][FEISHU_LATENCY_FIELD], 1.2)
+
+    def test_v2_phase_relative_speedup_is_not_used_as_baseline_speedup(self) -> None:
+        root = self.make_infra()
+        workspace = root / "workspaces" / "L1-043__043_mla_fused_qkv_rope_split"
+        workspace.mkdir(parents=True)
+        (workspace / "status.json").write_text(
+            json.dumps(
+                {
+                    "state": "phase3",
+                    "best_latency_ms": 0.91,
+                    "phase3": {
+                        "speedup_vs_phase1": "1.20x",
+                        "speedup_vs_v4b": "1.08x",
+                    },
+                    "timestamp": "2026-06-30T00:00:00Z",
+                }
+            )
+        )
+
+        rows = build_feishu_rows(build_local_snapshot(root), task_filter="L1-043")
+
+        self.assertIsNone(rows[0]["Speedup"])
+        self.assertEqual(rows[0][FEISHU_LATENCY_FIELD], 0.91)
+
     def test_speedup_formatting_and_feishu_rows(self) -> None:
         root = self.make_infra()
         workspace = root / "workspaces" / "fi_002_fused_add_rmsnorm_h4096"

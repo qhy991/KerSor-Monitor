@@ -951,6 +951,10 @@ def parse_numeric_metric(value: Any) -> float | None:
         value = value.strip()
         if not value:
             return None
+        if value.startswith("~"):
+            value = value[1:].strip()
+            if not value:
+                return None
         if value.lower() in {"n/a", "na", "nan", "none", "baseline", "ref_timeout", "mixed", "various", "inf", "infinity", "-inf", "-infinity"}:
             return None
         if re.search(r"\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?", value):
@@ -1437,6 +1441,52 @@ def first_nested_numeric(data: Any, keys: tuple[str, ...]) -> float | None:
     return None
 
 
+BASELINE_SPEEDUP_PATHS = (
+    "speedup",
+    "speedup_x",
+    "best_speedup",
+    "best_speedup_x",
+    "best_speedup_geomean",
+    "gmean_speedup",
+    "geomean_speedup",
+    "final_result.gmean_speedup",
+    "final_result.geomean_speedup",
+    "final_result.speedup_vs_baseline",
+    "final_result.speedup_vs_reference",
+    "final_result.speedup_vs_original",
+    "final_result.speedup_vs_v1",
+    "phase3.speedup_vs_baseline",
+    "phase3.speedup_vs_reference",
+    "phase3.speedup_vs_original",
+    "phase3.speedup_vs_v1",
+    "phase2.speedup_vs_baseline",
+    "phase2.speedup_vs_reference",
+    "phase2.speedup_vs_original",
+    "phase2.speedup_vs_v1",
+    "phase1.speedup_vs_baseline",
+    "phase1.speedup_vs_reference",
+    "phase1.speedup_vs_original",
+    "phase1.speedup_vs_v1",
+    "speedup_vs_baseline",
+    "speedup_vs_reference",
+    "speedup_vs_original",
+    "speedup_vs_v1",
+)
+
+
+BASELINE_SPEEDUP_KEYS = (
+    "best_speedup",
+    "best_speedup_x",
+    "best_speedup_geomean",
+    "gmean_speedup",
+    "geomean_speedup",
+    "speedup_vs_baseline",
+    "speedup_vs_reference",
+    "speedup_vs_original",
+    "speedup_vs_v1",
+)
+
+
 def task_name_from_workspace(workspace: str | None) -> str:
     if not workspace or "__" not in workspace:
         return ""
@@ -1468,7 +1518,9 @@ def normalize_task_row(
     latency = first_nested_numeric(status_data, ("best_latency_ms", "latency_ms", "latency"))
     if latency is None:
         latency = benchmark_data.get("latency")
-    speedup = first_nested_numeric(status_data, ("best_speedup_geomean", "speedup_vs_phase1", "phase2_speedup", "speedup"))
+    speedup = first_numeric_metric(status_data, BASELINE_SPEEDUP_PATHS)
+    if speedup is None:
+        speedup = first_nested_numeric(status_data, BASELINE_SPEEDUP_KEYS)
     if speedup is None:
         speedup = benchmark_data.get("speedup")
     mfu = status_data.get("mfu")
