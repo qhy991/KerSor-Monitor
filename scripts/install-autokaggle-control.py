@@ -1203,7 +1203,11 @@ def task_tmux_targets(task_id: str, record: dict) -> list[dict]:
 def kill_tmux_target(target: dict, *, dry_run: bool = False) -> dict:
     item = dict(target)
     if dry_run:
-        item["action"] = "would_kill"
+        try:
+            exists = tmux_window_exists(str(item.get("window") or ""))
+        except Exception:
+            exists = None
+        item["action"] = "would_kill" if exists is not False else "missing"
         return item
     window = str(item.get("window") or "")
     if not window:
