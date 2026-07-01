@@ -55,6 +55,7 @@ Terminal states free capacity:
 
 - `promoted`
 - `solution_validated`
+- `complete`
 - `cancelled`
 - `abandoned`
 - `failed`

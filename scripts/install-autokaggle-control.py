@@ -345,7 +345,7 @@ import skill_hub
 
 TMUX_FORMAT = "#{session_name}\t#{session_id}\t#{window_id}\t#{window_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}"
 IDENTITY_FIELDS = ("session_name", "session_id", "window_id", "window_name", "pane_id", "pane_pid", "current_command", "cwd")
-TERMINAL_STATES = {"promoted", "solution_validated", "cancelled", "abandoned", "crashed", "failed", "error", "smoke_ready", "smoke_failed"}
+TERMINAL_STATES = {"promoted", "solution_validated", "complete", "cancelled", "abandoned", "crashed", "failed", "error", "smoke_ready", "smoke_failed"}
 DEFAULT_MAX_ACTIVE_WORKERS = 24
 DEFAULT_MAX_PER_GPU_WORKERS = 3
 DEFAULT_MAX_STARTS_PER_TICK = 8
