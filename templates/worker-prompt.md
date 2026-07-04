@@ -14,10 +14,18 @@ Read `CLAUDE.md` in your current workspace directory. It contains the task descr
 
 ## Status Tracking
 
-Immediately write `status.json` in the workspace root:
+`start-worker.sh` pre-writes `status.json` with paper-experiment metadata
+(`experiment_id`, `protocol`, `gpu`, `paper_include_flag`, `paper_caveat` — see
+the "Paper Experiment Metadata" block in `runs/combined_prompt.md` when present).
+When you update `status.json`, **read the existing file first and preserve those
+fields**; change only `state` / `best_candidate` / `speedup` / `rounds` /
+`timestamp` (`+ reason` on stuck). Never overwrite the file with a metadata-less
+object.
+
+Initial shape (metadata fields already present when started with paper flags):
 
 ```json
-{"state": "running", "engine": "humanize", "best_candidate": null, "speedup": null, "rounds": 0, "timestamp": "<ISO-8601>"}
+{"state": "running", "engine": "humanize", "experiment_id": "...", "protocol": "humanize-RLCR", "gpu": "...", "paper_include_flag": "...", "paper_caveat": "", "best_candidate": null, "speedup": null, "rounds": 0, "timestamp": "<ISO-8601>"}
 ```
 
 Update this file whenever state changes (new candidate promoted, round completed, session ending).

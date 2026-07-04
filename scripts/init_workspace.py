@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 
 import skill_hub
+import gen_phase1_prompts
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -169,7 +170,7 @@ def render_claude_md(task: dict, definition: dict, run_signature: str) -> str:
     return result
 
 
-def init_workspace(task: dict, force: bool = False) -> bool:
+def init_workspace(task: dict, force: bool = False, gpu: str = "H800") -> bool:
     """Create a single workspace. Returns True if created, False if skipped."""
     dir_name = workspace_dir_name(task)
     ws_path = WORKSPACE_ROOT / dir_name
@@ -215,6 +216,15 @@ def init_workspace(task: dict, force: bool = False) -> bool:
     # 4. Render and write CLAUDE.md
     claude_md = render_claude_md(task, definition, run_signature)
     (ws_path / "CLAUDE.md").write_text(claude_md)
+
+    # 4b. Generate the Phase 1 prompt so the workspace is worker-ready after init
+    # (start-worker.sh requires docs/phase1-prompt.md). Best-effort: a failure
+    # warns but does not abort; rerun gen_phase1_prompts.py to regenerate.
+    try:
+        phase1_md = gen_phase1_prompts.generate_prompt(task, task["group"], gpu)
+        (ws_path / "docs" / "phase1-prompt.md").write_text(phase1_md)
+    except Exception as exc:
+        print(f"  WARNING {task['id']}: phase1-prompt generation failed: {exc}", file=sys.stderr)
 
     # 5. Copy .gitignore
     gitignore_content = GITIGNORE_TEMPLATE.read_text()
@@ -310,6 +320,8 @@ def main():
     parser.add_argument("--force", action="store_true", help="Re-create existing workspaces (will still skip if exists)")
     parser.add_argument("--tasks-yaml", dest="tasks_yaml", type=str,
                         help="Path to tasks YAML (default: tasks.yaml; env: KDA_TASKS_YAML)")
+    parser.add_argument("--gpu", type=str, default=os.environ.get("KDA_GPU", "H800"),
+                        help="GPU label for the phase-1 prompt wording (default: H800; env: KDA_GPU)")
     args = parser.parse_args()
 
     tasks_yaml = Path(args.tasks_yaml) if args.tasks_yaml else \
@@ -365,7 +377,7 @@ def main():
 
     for task in sorted(selected, key=lambda t: t["id"]):
         try:
-            if init_workspace(task, force=args.force):
+            if init_workspace(task, force=args.force, gpu=args.gpu):
                 created += 1
             else:
                 skipped += 1

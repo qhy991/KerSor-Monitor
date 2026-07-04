@@ -169,23 +169,40 @@ if [ -n "$EXPERIMENT_ID" ] || [ -n "$GPU" ] || [ -n "$PAPER_INCLUDE_FLAG" ] || [
 fi
 
 # Write initial status.json (Phase 3: includes paper-experiment metadata).
-cat > "$WORKSPACE/status.json" << EOF
-{
-  "state": "running",
-  "engine": "$ENGINE",
-  "protocol": "$PROTOCOL",
-  "experiment_id": "$EXPERIMENT_ID",
-  "gpu": "$GPU",
-  "paper_include_flag": "$PAPER_INCLUDE_FLAG",
-  "paper_caveat": "$PAPER_CAVEAT",
-  "task_id": "$TASK_ID",
-  "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "best_candidate": null,
-  "speedup": null,
-  "rounds": 0,
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-EOF
+# Use python json.dump with argv-passed values so free-text metadata (e.g. a
+# --paper-caveat containing quotes or backslashes) cannot produce invalid JSON,
+# which would break the worker's read-modify-write status tracking.
+python3 - "$WORKSPACE/status.json" "$ENGINE" "$PROTOCOL" "$EXPERIMENT_ID" "$GPU" \
+              "$PAPER_INCLUDE_FLAG" "$PAPER_CAVEAT" "$TASK_ID" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+path, engine, protocol, experiment_id, gpu, flag, caveat, task_id = sys.argv[1:9]
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+Path(path).write_text(
+    json.dumps(
+        {
+            "state": "running",
+            "engine": engine,
+            "protocol": protocol,
+            "experiment_id": experiment_id,
+            "gpu": gpu,
+            "paper_include_flag": flag,
+            "paper_caveat": caveat,
+            "task_id": task_id,
+            "started_at": now,
+            "best_candidate": None,
+            "speedup": None,
+            "rounds": 0,
+            "timestamp": now,
+        },
+        indent=2,
+    )
+    + "\n"
+)
+PY
 
 # --dry-run: stop here, before git commit + tmux launch. Lets orchestrators and
 # tests verify status.json + combined_prompt.md without starting a worker.
