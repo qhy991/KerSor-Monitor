@@ -16,6 +16,14 @@ TEMPLATES_DIR="$INFRA_DIR/templates"
 ENGINE="${KDA_ENGINE:-kersor}"
 TMUX_SESSION="kda"
 WORKER_MODEL="${KDA_WORKER_MODEL:-claude-opus-4-6[1m]}"
+DRY_RUN=0
+# Paper-experiment metadata (Phase 3). All optional; recorded in status.json and
+# runs/combined_prompt.md so each run is paper-addressable by the harvester.
+EXPERIMENT_ID="${KDA_EXPERIMENT_ID:-}"
+PROTOCOL="${KDA_PROTOCOL:-}"
+GPU="${KDA_GPU:-}"
+PAPER_INCLUDE_FLAG="${KDA_PAPER_INCLUDE_FLAG:-}"
+PAPER_CAVEAT="${KDA_PAPER_CAVEAT:-}"
 
 shell_quote() {
     printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
@@ -28,9 +36,29 @@ while [ $# -gt 0 ]; do
             ENGINE="$2"; shift 2 ;;
         --session)
             TMUX_SESSION="$2"; shift 2 ;;
+        --experiment-id)
+            EXPERIMENT_ID="$2"; shift 2 ;;
+        --protocol)
+            PROTOCOL="$2"; shift 2 ;;
+        --gpu)
+            GPU="$2"; shift 2 ;;
+        --paper-include-flag)
+            PAPER_INCLUDE_FLAG="$2"; shift 2 ;;
+        --paper-caveat)
+            PAPER_CAVEAT="$2"; shift 2 ;;
+        --dry-run)
+            DRY_RUN=1; shift ;;
         --help|-h)
-            echo "Usage: $0 <task_id> [--engine humanize|kersor|kda3phase] [--session <tmux_session>]"
-            echo "Example: $0 FI-002 --engine kersor"
+            echo "Usage: $0 <task_id> [options]"
+            echo "  --engine <humanize|kersor|kda3phase>        (default: kersor)"
+            echo "  --session <tmux_session>                    (default: kda)"
+            echo "  --experiment-id <id>                        e.g. E1-B200-FI26-KerSor-full"
+            echo "  --protocol <name>                           (default: derived from --engine)"
+            echo "  --gpu <B200|H800|...>                       recorded in status.json"
+            echo "  --paper-include-flag <headline|interim|ablation|exclude>"
+            echo "  --paper-caveat <text>"
+            echo "  --dry-run                                   write status.json + combined_prompt.md, do not launch"
+            echo "Example: $0 FI-002 --engine kersor --experiment-id E1-B200-FI26-KerSor-full --gpu B200"
             exit 0 ;;
         --*)
             echo "Unknown option: $1" >&2; exit 1 ;;
@@ -44,8 +72,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$TASK_ID" ]; then
-    echo "Usage: $0 <task_id> [--engine humanize|kersor|kda3phase] [--session <tmux_session>]"
-    echo "Example: $0 FI-002 --engine kersor"
+    echo "Usage: $0 <task_id> [options]  (--help for details)"
     exit 1
 fi
 
@@ -53,6 +80,15 @@ case "$ENGINE" in
     humanize|kersor|kda3phase) : ;;
     *) echo "ERROR: --engine must be humanize, kersor, or kda3phase (got: $ENGINE)" >&2; exit 1 ;;
 esac
+
+# Default protocol from engine when not explicitly given.
+if [ -z "$PROTOCOL" ]; then
+    case "$ENGINE" in
+        kersor) PROTOCOL="KerSor" ;;
+        humanize) PROTOCOL="humanize-RLCR" ;;
+        kda3phase) PROTOCOL="KDA-3Phase" ;;
+    esac
+fi
 
 # Resolve workspace directory from task_id
 # task_id format: FI-002, L1-043, Q-005, L2-082
@@ -89,14 +125,14 @@ if [ ! -f "$PHASE1_PROMPT" ]; then
     exit 1
 fi
 
-# Ensure tmux session exists
-tmux has-session -t "$TMUX_SESSION" 2>/dev/null || tmux new-session -d -s "$TMUX_SESSION"
-
-# Check if window already exists
-if tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -q "^${WINDOW_NAME}$"; then
-    echo "WARNING: Window '$WINDOW_NAME' already exists in session '$TMUX_SESSION'"
-    echo "Use: tmux select-window -t $TMUX_SESSION:$WINDOW_NAME"
-    exit 1
+# Ensure tmux session + window exist (skipped in --dry-run)
+if [ "$DRY_RUN" -eq 0 ]; then
+    tmux has-session -t "$TMUX_SESSION" 2>/dev/null || tmux new-session -d -s "$TMUX_SESSION"
+    if tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -q "^${WINDOW_NAME}$"; then
+        echo "WARNING: Window '$WINDOW_NAME' already exists in session '$TMUX_SESSION'"
+        echo "Use: tmux select-window -t $TMUX_SESSION:$WINDOW_NAME"
+        exit 1
+    fi
 fi
 
 # Create log/run directory
@@ -111,11 +147,37 @@ echo "---" >> "$COMBINED_PROMPT"
 echo "" >> "$COMBINED_PROMPT"
 cat "$PHASE1_PROMPT" >> "$COMBINED_PROMPT"
 
-# Write initial status.json
+# Inject paper-experiment metadata so the worker knows its arm and preserves it
+# in status.json. Appended only for actual paper runs (protocol alone, which is
+# always derived from --engine, does not trigger it).
+if [ -n "$EXPERIMENT_ID" ] || [ -n "$GPU" ] || [ -n "$PAPER_INCLUDE_FLAG" ] || [ -n "$PAPER_CAVEAT" ]; then
+    {
+        echo ""
+        echo "---"
+        echo ""
+        echo "## Paper Experiment Metadata (set by start-worker.sh)"
+        echo ""
+        echo "- experiment_id: ${EXPERIMENT_ID}"
+        echo "- protocol: ${PROTOCOL}"
+        echo "- gpu: ${GPU}"
+        echo "- paper_include_flag: ${PAPER_INCLUDE_FLAG}"
+        echo "- paper_caveat: ${PAPER_CAVEAT}"
+        echo ""
+        echo "When you write or update status.json, INCLUDE and PRESERVE these fields"
+        echo "(experiment_id, protocol, gpu, paper_include_flag, paper_caveat). Do not drop them."
+    } >> "$COMBINED_PROMPT"
+fi
+
+# Write initial status.json (Phase 3: includes paper-experiment metadata).
 cat > "$WORKSPACE/status.json" << EOF
 {
   "state": "running",
   "engine": "$ENGINE",
+  "protocol": "$PROTOCOL",
+  "experiment_id": "$EXPERIMENT_ID",
+  "gpu": "$GPU",
+  "paper_include_flag": "$PAPER_INCLUDE_FLAG",
+  "paper_caveat": "$PAPER_CAVEAT",
   "task_id": "$TASK_ID",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "best_candidate": null,
@@ -124,6 +186,14 @@ cat > "$WORKSPACE/status.json" << EOF
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
+
+# --dry-run: stop here, before git commit + tmux launch. Lets orchestrators and
+# tests verify status.json + combined_prompt.md without starting a worker.
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo "[dry-run] wrote $WORKSPACE/status.json + $COMBINED_PROMPT (no worker launched)"
+    cat "$WORKSPACE/status.json"
+    exit 0
+fi
 
 # Ensure git working tree is clean before any engine starts mutating files.
 cd "$WORKSPACE"

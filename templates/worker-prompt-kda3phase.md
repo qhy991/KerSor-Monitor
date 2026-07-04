@@ -21,13 +21,24 @@ commands for this task.
 
 ## Status Tracking
 
-Immediately write `status.json` in the workspace root:
+`start-worker.sh` pre-writes `status.json` with paper-experiment metadata
+(`experiment_id`, `gpu`, `paper_include_flag`, `paper_caveat`, and `protocol` —
+see the "Paper Experiment Metadata" block in `runs/combined_prompt.md`). When you
+update `status.json`, **read the existing file first and preserve those fields**;
+change only `state` / `phase` / `best_candidate` / `speedup` / `rounds` /
+`timestamp`. Never overwrite the file with a metadata-less object.
+
+Initial shape (metadata fields already present):
 
 ```json
 {
   "state": "running",
   "engine": "kda3phase",
   "protocol": "KDA-3Phase",
+  "experiment_id": "...",
+  "gpu": "...",
+  "paper_include_flag": "...",
+  "paper_caveat": "",
   "phase": "phase1_correctness",
   "best_candidate": null,
   "speedup": null,
