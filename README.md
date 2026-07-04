@@ -189,7 +189,8 @@ the registered windows, not the whole tmux session.
 python3 scripts/otel-plugin.py remote-start --config config/local-monitor.yaml
 
 # Start new workers with Claude Code telemetry enabled.
-KDA_OTEL_ENABLED=1 bash scripts/start-worker.sh FI-002
+KDA_OTEL_ENABLED=1 bash scripts/start-worker.sh FI-002             # default engine (kersor)
+KDA_OTEL_ENABLED=1 bash scripts/start-worker.sh FI-002 --engine humanize   # RLCR engine
 
 # Pull and summarize the captured run later from the local Mac.
 python3 scripts/otel-plugin.py pull --config config/local-monitor.yaml --run-id latest
@@ -203,7 +204,10 @@ gitignored because payloads can contain account or session metadata.
 
 ## Architecture
 
-- **Workers**: Each optimization task runs as a Claude Code session in tmux, following the KDA 3-stage flow (Explore -> Plan -> RLCR)
+- **Workers**: Each optimization task runs as a Claude Code session in tmux. The optimization engine is selectable at launch via `start-worker.sh <TASK_ID> --engine <humanize|kersor>` (default **kersor**):
+  - **humanize** (legacy): KDA 3-stage flow Explore -> Plan -> RLCR (`/humanize:gen-plan` + `/humanize:start-rlcr-loop`), candidates under `candidates/`, state under `.humanize/rlcr/`.
+  - **kersor** (default): `/kersor:gen-spec` writes a verified `kersor-spec.md`, then `/kersor:optimize --spec` runs the per-round loop. The best kernel lands under `.kersor/<session>/best-kernel/`; `scripts/kersor-promote-solution.sh` copies it into `solution.py` after the loop terminates (KerSor never overwrites the original kernel). State is in `.kersor/<session>/state.md`.
+  - Both engines write the same `status.json` (`engine` field records which one) so the monitor and Feishu dashboard treat them uniformly.
 - **Worker registry**: Every worker records `session_name`, `session_id`, `window_id`, `pane_id`, `pane_pid`, cwd, assigned GPU UUID/index/slot, phase recipe, and monitor mode
 - **Orchestrator**: Runs on the GPU server, schedules workers, starts per-worker monitors, and keeps `orchestrator/state.json` current
 - **Skill hub**: `skill_hub/manifest.yaml` records required project-local skill versions; new workspaces symlink `.claude/skills/*` and `.codex/skills/*` into `skill_hub/active/*`
@@ -220,9 +224,11 @@ gitignored because payloads can contain account or session metadata.
 
 - [Claude Code](https://claude.ai/code) CLI
 - [kernel-design-agents](https://github.com/mit-han-lab/kernel-design-agents) (KDA skills: `/KernelWiki`, `/ncu-report-skill`)
-- [humanize](https://github.com/anthropics/humanize) (`gen-plan`, `start-rlcr-loop`)
+- One optimization engine (install at least the default; both can coexist):
+  - [humanize](https://github.com/anthropics/humanize) (`gen-plan`, `start-rlcr-loop`) — use with `--engine humanize`
+  - [KerSor](https://github.com/UqoAoqU/KerSor) (`/kersor:gen-spec`, `/kersor:optimize`) — default engine
 - [SOL-ExecBench](https://github.com/NVIDIA/SOL-ExecBench)
-- [lark-cli](https://github.com/nicepkg/lark-cli) (for Feishu dashboard)
+- [lark-cli](https://github.com/larksuite/cli) (for Feishu dashboard)
 - tmux, NVIDIA GPU with nvidia-smi
 
 ## Quick Start

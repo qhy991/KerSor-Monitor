@@ -54,7 +54,7 @@ flowchart TD
     StartWorker --> WorkerStatus["control-v2/workspaces/<task>/status.json"]
     WorkerPane --> Phase1["Phase 1: explore"]
     Phase1 --> Phase2["Phase 2: plan"]
-    Phase2 --> Phase3["Phase 3: RLCR"]
+    Phase2 --> Phase3["Phase 3: optimize loop"]
     Phase3 --> Candidate["candidate / solution artifacts"]
     Candidate --> V2Wrappers["bin/gpu_lock.sh + bin/run_sol_v2.sh"]
     V2Wrappers --> BenchResult["runs/*.jsonl / benchmark.csv"]

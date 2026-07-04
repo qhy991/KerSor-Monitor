@@ -50,9 +50,20 @@ infra/
         ├── runs/                  # Logs
         │   └── rlcr_*.log
         │
-        └── .humanize/             # RLCR state (auto-managed)
-            └── rlcr/<timestamp>/
+        ├── .humanize/             # RLCR state (humanize engine, auto-managed)
+        │   └── rlcr/<timestamp>/
+        │
+        └── .kersor/               # KerSor session state (kersor engine)
+            └── <session>/
+                ├── state.md       # phase/round/stall_count (no best speedup)
+                ├── run-{N}/        # per-round attempts + analysis.json
+                └── best-kernel/    # winning kernel (copied to solution.py by shim)
 ```
+
+The optimization engine is chosen at `start-worker.sh --engine <humanize|kersor>`
+(default kersor). Only the matching state dir is populated; the other stays
+absent. Both engines write `status.json` (with an `engine` field) so the monitor
+treats them uniformly.
 
 ## Design Decisions
 
@@ -121,11 +132,15 @@ candidate_001.py  →  benchmark  →  outputs/candidate_001_benchmark.csv
 ┌─ orchestrator reads tasks.yaml ─┐
 │                                  │
 │  1. init-workspace.sh FI-002     │  creates workspace + symlinks + git init
-│  2. gen draft (Claude)           │  → docs/draft.md
-│  3. gen plan (humanize:gen-plan) │  → docs/plan.md
-│  4. RLCR loop                    │  → candidates/*.py + .humanize/
-│  5. benchmark (gpu-run.sh)       │  → outputs/*.csv
-│  6. promote or iterate           │  → solution.py symlink
+│  2. start-worker.sh FI-002       │  --engine humanize|kersor (default kersor)
 │                                  │
+│  humanize:                       │  kersor:
+│   2. gen draft (Claude)          │   2. /kersor:gen-spec → kersor-spec.md
+│   3. gen plan (gen-plan)         │   3. /kersor:optimize --spec → .kersor/
+│   4. RLCR loop → candidates/     │   4. kersor-promote-solution.sh → solution.py
+│   5. benchmark (gpu-run.sh)      │   5. benchmark (gpu-run.sh)
+│   6. promote or iterate          │   6. iterate (re-spec + re-optimize)
+│                                  │
+│  both write status.json (engine field) → monitor → Feishu
 └──────────────────────────────────┘
 ```
