@@ -7,6 +7,8 @@ Usage:
     python init_workspace.py FI-002 L1-043  # Initialize specific tasks
     python init_workspace.py --group L1     # Initialize all tasks in a group
     python init_workspace.py --list         # List all tasks without creating
+    python init_workspace.py --tasks-yaml tasks-flashinfer-b200.yaml --list
+                                            # Use the B200 FlashInfer-26 manifest
 """
 
 import argparse
@@ -306,13 +308,18 @@ def main():
     parser.add_argument("--group", type=str, help="Initialize all tasks in a group (FlashInfer/L1/Quant/L2)")
     parser.add_argument("--list", action="store_true", help="List all tasks without creating workspaces")
     parser.add_argument("--force", action="store_true", help="Re-create existing workspaces (will still skip if exists)")
+    parser.add_argument("--tasks-yaml", dest="tasks_yaml", type=str,
+                        help="Path to tasks YAML (default: tasks.yaml; env: KDA_TASKS_YAML)")
     args = parser.parse_args()
 
-    if not TASKS_YAML.exists():
-        print(f"ERROR: tasks.yaml not found at {TASKS_YAML}", file=sys.stderr)
+    tasks_yaml = Path(args.tasks_yaml) if args.tasks_yaml else \
+        Path(os.environ.get("KDA_TASKS_YAML", str(TASKS_YAML)))
+
+    if not tasks_yaml.exists():
+        print(f"ERROR: tasks yaml not found at {tasks_yaml}", file=sys.stderr)
         sys.exit(1)
 
-    tasks = load_tasks(TASKS_YAML)
+    tasks = load_tasks(tasks_yaml)
 
     # --list mode
     if args.list:

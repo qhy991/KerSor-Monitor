@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""Generate docs/phase1-prompt.md for each of the 60 task workspaces."""
+"""Generate docs/phase1-prompt.md for each task workspace.
 
+Usage:
+    python gen_phase1_prompts.py                                  # default tasks.yaml, H800 wording
+    python gen_phase1_prompts.py --tasks-yaml tasks-flashinfer-b200.yaml --gpu B200
+"""
+
+import argparse
 import json
 import os
 import re
@@ -114,7 +120,7 @@ def bottleneck_guidance(bottleneck: str) -> str:
         return "   - Mixed bottleneck: balance memory traffic reduction (fusion, vectorized loads) with compute optimization (tensor cores, ILP)"
 
 
-def generate_prompt(task: dict, group_name: str) -> str:
+def generate_prompt(task: dict, group_name: str, gpu: str = "H800") -> str:
     """Generate phase1-prompt.md content for one task."""
     task_id = task["id"]
     name = task["name"]
@@ -184,7 +190,7 @@ def generate_prompt(task: dict, group_name: str) -> str:
 2. Understand the computational pattern and memory access pattern
 3. Optimization focus ({bottleneck}-bound):
 {bottleneck_guidance(bottleneck)}
-4. Use `/KernelWiki` skill to research relevant H800 optimization techniques
+4. Use `/KernelWiki` skill to research relevant {gpu} optimization techniques
 5. Run baseline: `./gpu-run.sh python3 ../../scripts/bench.py .`
 6. Gather the evidence above (problem summary, baseline numbers, primary
    optimization direction with 2-3 alternatives and trade-offs, risk analysis).
@@ -207,7 +213,17 @@ prompt's Step 2 onward now to run the engine's loop, validate, and promote.
 
 
 def main():
-    with open(TASKS_YAML) as f:
+    parser = argparse.ArgumentParser(description="Generate docs/phase1-prompt.md per workspace")
+    parser.add_argument("--tasks-yaml", dest="tasks_yaml", type=str,
+                        help="Path to tasks YAML (default: tasks.yaml; env: KDA_TASKS_YAML)")
+    parser.add_argument("--gpu", type=str, default=os.environ.get("KDA_GPU", "H800"),
+                        help="GPU label substituted into the research guidance (default: H800; env: KDA_GPU)")
+    args = parser.parse_args()
+
+    tasks_yaml = Path(args.tasks_yaml) if args.tasks_yaml else \
+        Path(os.environ.get("KDA_TASKS_YAML", str(TASKS_YAML)))
+
+    with open(tasks_yaml) as f:
         config = yaml.safe_load(f)
 
     groups = config.get("groups", [])
@@ -228,7 +244,7 @@ def main():
                 continue
 
             try:
-                content = generate_prompt(task, group_name)
+                content = generate_prompt(task, group_name, args.gpu)
                 out_path = ws_path / "docs" / "phase1-prompt.md"
                 out_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(out_path, "w") as f:
