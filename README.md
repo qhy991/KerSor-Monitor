@@ -220,6 +220,78 @@ gitignored because payloads can contain account or session metadata.
 - **Concurrency**: CPU/LLM work can run concurrently; use 3-4 worker slots per GPU UUID and enforce GPU mutual exclusion with the lock wrapper
 - **Telemetry**: Optional OpenTelemetry capture runs as a side channel. It is off by default and only applies to new workers started with `KDA_OTEL_ENABLED=1`.
 
+## Paper Experiments (B200 FlashInfer-Bench-26)
+
+For the KerSor paper, `kda-monitor` is the execution + observability layer for
+the B200 FlashInfer-Bench-26 benchmark. The paper protocol is frozen in design
+docs; the monitor enforces and records it.
+
+**Two-axis metric model (important):** `speedup` and `sol_score` are never
+combined into one metric.
+- The worker loop measures **speedup** vs reference via `bench.py` (SoL
+  `run_dataset.py`) — the in-loop optimization KPI.
+- **`sol_score`** (an aggregate in [0, 1]) is obtained *out-of-loop* via manual
+  leaderboard submission and joined back by the harvester. It is not a latency
+  ratio → never geomean'd; only `speedup` uses geomean.
+
+Design docs:
+- `docs/kersor-paper-experiment-plan.md` — evidence tiers E1–E5, required fields.
+- `docs/kersor-paper-experiment-implementation-plan.md` — phased plan, two-axis
+  harvester design, concrete Verda host/path verification.
+
+### Task manifest
+
+`tasks-flashinfer-b200.yaml` registers all 26 FlashInfer-Bench tasks with
+`family`, `baseline_class`, `official_kernel_id` (210–235), and `gpu: B200`. Use
+it via `--tasks-yaml`:
+
+```bash
+python3 scripts/init_workspace.py --tasks-yaml tasks-flashinfer-b200.yaml --list
+python3 scripts/init_workspace.py --tasks-yaml tasks-flashinfer-b200.yaml --gpu B200 FI-001
+```
+
+`init_workspace.py` also generates `docs/phase1-prompt.md`, so a workspace is
+worker-ready after init (no separate `gen_phase1_prompts.py` step).
+
+### Worker metadata (paper-addressable runs)
+
+```bash
+bash scripts/start-worker.sh FI-001 \
+  --engine kersor \
+  --experiment-id E1-B200-FI26-KerSor-full \
+  --gpu B200 \
+  --paper-include-flag headline
+```
+
+`--experiment-id` / `--protocol` / `--gpu` / `--paper-include-flag` /
+`--paper-caveat` (env: `KDA_EXPERIMENT_ID` etc.) are written into `status.json`
+and a metadata block in `runs/combined_prompt.md`. `--protocol` defaults from
+`--engine` (KerSor / humanize-RLCR / KDA-3Phase). Workers read-modify-write
+`status.json` to preserve these fields across updates. Use `--dry-run` to write
+`status.json` + `combined_prompt.md` without launching a worker.
+
+### Monitor + Feishu
+
+The monitor surfaces paper metadata as Feishu columns — Experiment, Engine,
+Protocol, GPU, Family, Paper Flag, Paper Caveat, Harvest Ready — alongside the
+existing Speedup / Latency / MFU / etc. columns. `init-feishu` creates them.
+
+### Harvester (planned — Phase 5)
+
+`scripts/harvest_paper_tables.py` (not yet implemented) will join each
+workspace's speedup (from `bench.py`) and the official `sol_score` (from a
+hand-filled `submissions.csv`) into two-axis paper CSVs. See the implementation
+plan Phase 5 for the schema, aggregation formulas, and headline gates.
+
+### Deployment (Verda = B200)
+
+The B200 host is `verda` (`agile-snow-grows-fin-03`, 1× B200). SoL lives at
+`/home/qinhaiyan/sol-execbench` with the 26 FlashInfer tasks at
+`data/benchmark/FlashInfer-Bench/`. Clone this repo as its sibling
+(`/home/qinhaiyan/KerSor-Monitor`) so the relative `data_root` resolves, and
+confirm the `/kersor:*` + `/humanize:*` Claude Code plugins are enabled for the
+worker session. Run workspace init + workers on Verda, not locally.
+
 ## Prerequisites
 
 - [Claude Code](https://claude.ai/code) CLI
@@ -300,18 +372,25 @@ new starts and interventions.
 │   ├── gen-dashboard-html.py
 │   ├── update-dashboard.py
 │   ├── init_workspace.py
-│   └── gen_phase1_prompts.py
+│   ├── gen_phase1_prompts.py
+│   ├── kersor-promote-solution.sh      # Copy KerSor best-kernel -> solution.py
+│   └── fetch_b200_leaderboard_snapshot.py  # Official B200 community baselines
 ├── local-monitor/
 │   └── CLAUDE.md           # Local monitor role reference doc
 ├── config/
 │   └── local-monitor.yaml.example
 ├── templates/              # Prompt templates
-│   ├── worker-prompt.md
+│   ├── worker-prompt.md             # humanize engine (legacy)
+│   ├── worker-prompt-kersor.md      # kersor engine (default)
+│   ├── worker-prompt-kda3phase.md   # kda3phase engine (paper baseline)
 │   ├── phase1-prompt.md.tmpl
 │   ├── phase2-prompt.md.tmpl
 │   └── CLAUDE.md.tmpl
 ├── orchestrator/
 │   └── CLAUDE.md           # Orchestrator reference doc
-├── tasks.yaml              # Task registry
-└── workspaces/             # One workspace per task (auto-generated)
+├── tasks.yaml                    # Task registry (H800 SoL-ExecBench)
+├── tasks-flashinfer-b200.yaml    # B200 FlashInfer-Bench-26 manifest (paper)
+├── docs/                         # Design + reference docs (paper-experiment plan)
+├── tests/                        # unittest suite
+└── workspaces/                   # One workspace per task (auto-generated)
 ```
