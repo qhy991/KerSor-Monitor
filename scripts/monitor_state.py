@@ -422,6 +422,79 @@ def collect_rlcr_state(workspace):
     return state
 
 
+def collect_kersor_state(workspace):
+    # KerSor session state lives under .kersor/<session>/. state.md holds
+    # phase/current_round/stall_count (YAML frontmatter, parsed without yaml
+    # so the remote collector needs no extra deps). Best speedup is NOT in
+    # state.md — derive it from run-*/analysis.json. Best kernel: best-kernel/.
+    kersor_root = workspace / ".kersor"
+    state = {"exists": kersor_root.is_dir(), "sessions": []}
+    if not kersor_root.is_dir():
+        return state
+    for session_dir in sorted(p for p in kersor_root.iterdir() if p.is_dir()):
+        session = {
+            "name": session_dir.name,
+            "phase": None,
+            "current_round": None,
+            "stall_count": None,
+            "target_speedup": None,
+            "mode": None,
+            "best_speedup": None,
+            "best_kernel": {"exists": False, "files": []},
+        }
+        state_md = session_dir / "state.md"
+        if state_md.is_file():
+            try:
+                lines = state_md.read_text(errors="replace").splitlines()
+                if lines and lines[0].strip() == "---":
+                    end = None
+                    for i in range(1, len(lines)):
+                        if lines[i].strip() == "---":
+                            end = i
+                            break
+                    if end is not None:
+                        for line in lines[1:end]:
+                            if ":" in line:
+                                k, _, v = line.partition(":")
+                                k = k.strip()
+                                v = v.strip()
+                                if k in ("phase", "mode"):
+                                    session[k] = v or None
+                                elif k in ("current_round", "stall_count"):
+                                    try:
+                                        session[k] = int(v)
+                                    except ValueError:
+                                        session[k] = None
+                                elif k == "target_speedup":
+                                    try:
+                                        session[k] = float(v)
+                                    except ValueError:
+                                        session[k] = v or None
+            except Exception as exc:
+                session["state_md_error"] = f"{type(exc).__name__}: {exc}"
+        best = None
+        for run_dir in sorted(p for p in session_dir.iterdir() if p.is_dir() and p.name.startswith("run-")):
+            analysis = run_dir / "analysis.json"
+            if not analysis.is_file():
+                continue
+            try:
+                data = json.loads(analysis.read_text(errors="replace"))
+            except Exception:
+                continue
+            spd = data.get("speedup") if isinstance(data, dict) else None
+            if isinstance(spd, (int, float)) and (best is None or spd > best):
+                best = spd
+        session["best_speedup"] = best
+        best_kernel_dir = session_dir / "best-kernel"
+        if best_kernel_dir.is_dir():
+            session["best_kernel"] = {
+                "exists": True,
+                "files": [p.name for p in best_kernel_dir.iterdir() if p.is_file()][:10],
+            }
+        state["sessions"].append(session)
+    return state
+
+
 def collect_workspace_state(workspace):
     candidates = workspace / "candidates"
     runs = workspace / "runs"
@@ -444,6 +517,7 @@ def collect_workspace_state(workspace):
         "recent_runs": directory_names(runs, limit=20),
         "status": read_json(workspace / "status.json"),
         "rlcr": collect_rlcr_state(workspace),
+        "kersor": collect_kersor_state(workspace),
     }
 
 

@@ -186,30 +186,22 @@ def generate_prompt(task: dict, group_name: str) -> str:
 {bottleneck_guidance(bottleneck)}
 4. Use `/KernelWiki` skill to research relevant H800 optimization techniques
 5. Run baseline: `./gpu-run.sh python3 ../../scripts/bench.py .`
-6. Write `docs/draft.md` using `/humanize:explore-idea` or manually, containing:
-   - Primary optimization direction with objective evidence
-   - 2-3 alternative directions with trade-off analysis
-   - Risk analysis and known constraints
-   - Synthesis notes
+6. Gather the evidence above (problem summary, baseline numbers, primary
+   optimization direction with 2-3 alternatives and trade-offs, risk analysis).
+   The optimization engine consumes this — do not hand-write kernel code yet.
 
 ## After Phase 1
 
-Once `docs/draft.md` is complete, proceed to Phase 2:
-```bash
-/humanize:gen-plan --discussion --input docs/draft.md --output docs/plan.md
-```
-
-Then Phase 3:
-```bash
-/humanize:start-rlcr-loop docs/plan.md --yolo --skip-quiz
-```
+Steps 1-6 are engine-neutral. The optimization command flow (humanize RLCR or
+KerSor gen-spec/optimize) is defined by your worker prompt. Follow the worker
+prompt's Step 2 onward now to run the engine's loop, validate, and promote.
 
 ## Constraints
 
 - Do NOT modify anything under `problem/` -- it is read-only
 - Preserve the exact `run()` signature from `reference.py`
-- All candidates go in `candidates/candidate_NNN.py`
-- Promote best to `solution.py` via: `cp candidates/candidate_NNN.py solution.py`
+- All GPU commands must go through `./gpu-run.sh` (flock-based GPU access)
+- `solution.py` is the deliverable `bench.py` loads — promote your best candidate there
 """
     return prompt
 

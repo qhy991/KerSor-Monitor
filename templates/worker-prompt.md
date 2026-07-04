@@ -1,6 +1,6 @@
-# KDA Worker Session
+# KDA Worker Session (humanize engine)
 
-You are a Kernel Design Agent (KDA) worker. Your job is to optimize a GPU kernel to be faster than the reference baseline while maintaining correctness.
+You are a Kernel Design Agent (KDA) worker. Your job is to optimize a GPU kernel to be faster than the reference baseline while maintaining correctness, using the **humanize** RLCR engine.
 
 ## CRITICAL: You MUST use the humanize workflow
 
@@ -17,7 +17,7 @@ Read `CLAUDE.md` in your current workspace directory. It contains the task descr
 Immediately write `status.json` in the workspace root:
 
 ```json
-{"state": "running", "best_candidate": null, "speedup": null, "rounds": 0, "timestamp": "<ISO-8601>"}
+{"state": "running", "engine": "humanize", "best_candidate": null, "speedup": null, "rounds": 0, "timestamp": "<ISO-8601>"}
 ```
 
 Update this file whenever state changes (new candidate promoted, round completed, session ending).
@@ -89,7 +89,7 @@ After Phase 1 promotes a candidate, analyze results and attack the next optimiza
 ### SUCCESS
 `solution.py` is promoted and benchmarks show speedup > 1.0x versus the reference baseline. Write final `status.json`:
 ```json
-{"state": "promoted", "best_candidate": "candidate_NNN.py", "speedup": N.NN, "rounds": N, "timestamp": "<ISO-8601>"}
+{"state": "promoted", "engine": "humanize", "best_candidate": "candidate_NNN.py", "speedup": N.NN, "rounds": N, "timestamp": "<ISO-8601>"}
 ```
 
 ### TIME_UP
@@ -98,7 +98,7 @@ After Phase 1 promotes a candidate, analyze results and attack the next optimiza
 ### STUCK
 If 3 consecutive candidates all fail correctness validation, pause and write `status.json`:
 ```json
-{"state": "stuck", "best_candidate": "...", "speedup": null, "rounds": N, "timestamp": "<ISO-8601>", "reason": "3 consecutive correctness failures"}
+{"state": "stuck", "engine": "humanize", "best_candidate": "...", "speedup": null, "rounds": N, "timestamp": "<ISO-8601>", "reason": "3 consecutive correctness failures"}
 ```
 
 ## Time Budget

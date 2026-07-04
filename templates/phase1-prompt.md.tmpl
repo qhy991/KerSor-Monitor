@@ -79,53 +79,14 @@ Use `/KernelWiki` to look up architecture-specific techniques relevant to this o
 - For GEMM: tile sizes, tensor core layouts, split-K
 - For element-wise: vectorized loads, grid-stride loops
 
-### Step 4: Write the exploration draft
+### Step 4: Proceed to the optimization flow
 
-Create `docs/draft.md` with the following structure:
+Steps 1–3 (understand, baseline, research) are engine-neutral. The actual
+optimization command flow is defined by your **worker prompt** — either the
+humanize RLCR flow (`explore-idea` → `gen-plan` → `start-rlcr-loop`) or the
+KerSor flow (`gen-spec` → `optimize --spec` → best-kernel shim). Follow the
+worker prompt's Step 2 onward now; do not hand-write kernel code outside the
+engine's loop.
 
-```markdown
-# Phase 1 Draft: {{TASK_ID}} -- {{PROBLEM_NAME}}
-
-## Problem Summary
-[Brief description of the operator, its role, and key workload characteristics]
-
-## Baseline Analysis
-[Baseline SOL scores, latencies, and initial observations from profiling]
-
-## Primary Optimization Direction
-[Your best optimization idea, with concrete evidence for why it should work]
-- Technique: [what]
-- Expected impact: [why, with numbers if possible]
-- Risk: [what could go wrong]
-
-## Alternative Direction 1
-[Second-best idea]
-- Technique / Expected impact / Risk
-
-## Alternative Direction 2
-[Third idea, possibly more speculative]
-- Technique / Expected impact / Risk
-
-## Risk Analysis
-[What are the main risks across all directions? Correctness pitfalls?
- Precision issues? Performance cliffs at certain workload sizes?]
-
-## Synthesis
-[Which direction to try first and why. What to fall back to if it fails.]
-```
-
-### Step 5: Proceed to Phase 2
-
-After completing the draft, generate the implementation plan:
-
-```
-/humanize:gen-plan --discussion
-```
-
-Then start the RLCR loop:
-
-```
-/humanize:start-rlcr-loop --yolo --skip-quiz
-```
-
-Implement `candidates/candidate_001.py`, validate correctness, benchmark, and promote if it beats the baseline.
+A typical first target is speedup > 1.0x over the reference baseline recorded
+in Step 2.

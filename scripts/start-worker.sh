@@ -1,6 +1,7 @@
 #!/bin/bash
 # start-worker.sh — Start a KDA worker for a specific task in a tmux window
-# Usage: ./start-worker.sh <task_id> [--session kda]
+# Usage: ./start-worker.sh <task_id> [--engine humanize|kersor|kda3phase] [--session kda]
+#   --engine  optimization engine (default: kersor; humanize for RLCR; kda3phase for paper baseline)
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -12,19 +13,46 @@ if [ -f "$CONFIG_ENV" ]; then
 fi
 WORKSPACES_DIR="$INFRA_DIR/workspaces"
 TEMPLATES_DIR="$INFRA_DIR/templates"
-TMUX_SESSION="${2:-kda}"
+ENGINE="${KDA_ENGINE:-kersor}"
+TMUX_SESSION="kda"
 WORKER_MODEL="${KDA_WORKER_MODEL:-claude-opus-4-6[1m]}"
 
 shell_quote() {
     printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
 }
 
-TASK_ID="$1"
+TASK_ID=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --engine)
+            ENGINE="$2"; shift 2 ;;
+        --session)
+            TMUX_SESSION="$2"; shift 2 ;;
+        --help|-h)
+            echo "Usage: $0 <task_id> [--engine humanize|kersor|kda3phase] [--session <tmux_session>]"
+            echo "Example: $0 FI-002 --engine kersor"
+            exit 0 ;;
+        --*)
+            echo "Unknown option: $1" >&2; exit 1 ;;
+        *)
+            if [ -z "$TASK_ID" ]; then
+                TASK_ID="$1"; shift
+            else
+                echo "Unexpected argument: $1" >&2; exit 1
+            fi ;;
+    esac
+done
+
 if [ -z "$TASK_ID" ]; then
-    echo "Usage: $0 <task_id> [--session <tmux_session>]"
-    echo "Example: $0 FI-002"
+    echo "Usage: $0 <task_id> [--engine humanize|kersor|kda3phase] [--session <tmux_session>]"
+    echo "Example: $0 FI-002 --engine kersor"
     exit 1
 fi
+
+case "$ENGINE" in
+    humanize|kersor|kda3phase) : ;;
+    *) echo "ERROR: --engine must be humanize, kersor, or kda3phase (got: $ENGINE)" >&2; exit 1 ;;
+esac
 
 # Resolve workspace directory from task_id
 # task_id format: FI-002, L1-043, Q-005, L2-082
@@ -38,7 +66,16 @@ if [ -z "$WORKSPACE" ] || [ ! -d "$WORKSPACE" ]; then
 fi
 
 WINDOW_NAME=$(basename "$WORKSPACE")
-WORKER_PROMPT="$TEMPLATES_DIR/worker-prompt.md"
+# Engine selects the worker prompt variant. humanize keeps the legacy RLCR flow;
+# kersor drives gen-spec -> optimize; kda3phase is the paper KDA baseline.
+case "$ENGINE" in
+    humanize)
+        WORKER_PROMPT="$TEMPLATES_DIR/worker-prompt.md" ;;
+    kersor)
+        WORKER_PROMPT="$TEMPLATES_DIR/worker-prompt-kersor.md" ;;
+    kda3phase)
+        WORKER_PROMPT="$TEMPLATES_DIR/worker-prompt-kda3phase.md" ;;
+esac
 PHASE1_PROMPT="$WORKSPACE/docs/phase1-prompt.md"
 
 # Verify required files exist
@@ -78,6 +115,7 @@ cat "$PHASE1_PROMPT" >> "$COMBINED_PROMPT"
 cat > "$WORKSPACE/status.json" << EOF
 {
   "state": "running",
+  "engine": "$ENGINE",
   "task_id": "$TASK_ID",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "best_candidate": null,
@@ -87,7 +125,7 @@ cat > "$WORKSPACE/status.json" << EOF
 }
 EOF
 
-# Ensure git working tree is clean (RLCR requires this)
+# Ensure git working tree is clean before any engine starts mutating files.
 cd "$WORKSPACE"
 if ! git diff --quiet HEAD 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard)" ]; then
     git add -A
@@ -152,6 +190,7 @@ path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
 echo "Started worker for $TASK_ID"
+echo "  Engine: $ENGINE"
 echo "  Workspace: $WORKSPACE"
 echo "  tmux: $TMUX_SESSION:$WINDOW_NAME"
 echo "  pane: $(printf '%s' "$TMUX_ROW" | cut -f5)"
