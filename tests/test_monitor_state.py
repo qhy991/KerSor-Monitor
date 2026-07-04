@@ -12,6 +12,8 @@ from monitor_state import (  # noqa: E402
     FEISHU_LATENCY_FIELD,
     FEISHU_TASK_NAME_FIELD,
     FEISHU_STATUS_OPTIONS,
+    FEISHU_ROW_FIELDS,
+    FEISHU_WRITABLE_FIELDS,
     build_monitor_actuation,
     build_feishu_rows,
     build_feishu_field_create_command,
@@ -441,7 +443,8 @@ class MonitorStateTests(unittest.TestCase):
         missing = missing_feishu_init_field_definitions(field_payload)
         self.assertEqual(
             [field["name"] for field in missing],
-            [FEISHU_TASK_NAME_FIELD, "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated"],
+            [FEISHU_TASK_NAME_FIELD, "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated",
+             "Experiment", "Engine", "Protocol", "GPU", "Family", "Paper Flag", "Paper Caveat", "Harvest Ready"],
         )
         latency_field = next(field for field in missing if field["name"] == FEISHU_LATENCY_FIELD)
         self.assertEqual(latency_field["style"]["precision"], 4)
@@ -500,19 +503,25 @@ class MonitorStateTests(unittest.TestCase):
                 FEISHU_LATENCY_FIELD: 0.010196,
                 "MFU": None,
                 "Updated": "2026-06-29 12:00:00",
+                "Experiment": "E1-B200-FI26-KerSor-full",
+                "Engine": "kersor",
+                "Protocol": "KerSor",
+                "GPU": "B200",
+                "Family": "rmsnorm",
+                "Paper Flag": "headline",
+                "Paper Caveat": "",
+                "Harvest Ready": True,
             }
         ]
         create_cmd = build_feishu_record_batch_create_command(rows, "base", "table")
         payload = json.loads(create_cmd[-1])
 
         self.assertEqual(create_cmd[:5], ["lark-cli", "--as", "user", "base", "+record-batch-create"])
-        self.assertEqual(
-            payload["fields"],
-            ["Task ID", FEISHU_TASK_NAME_FIELD, "Status", "Round", "Candidates", "Speedup", FEISHU_LATENCY_FIELD, "MFU", "Updated"],
-        )
+        self.assertEqual(payload["fields"], list(FEISHU_ROW_FIELDS))
         self.assertEqual(
             payload["rows"][0],
-            ["L1-011", "rotary_position_embedding", "running", 0, 0, None, 0.0102, None, "2026-06-29 12:00:00"],
+            ["L1-011", "rotary_position_embedding", "running", 0, 0, None, 0.0102, None, "2026-06-29 12:00:00",
+             "E1-B200-FI26-KerSor-full", "kersor", "KerSor", "B200", "rmsnorm", "headline", "", True],
         )
 
     def test_feishu_command_uses_user_identity_and_expected_payload(self) -> None:
@@ -564,6 +573,14 @@ class MonitorStateTests(unittest.TestCase):
                     {"name": FEISHU_LATENCY_FIELD, "type": "number"},
                     {"name": "MFU", "type": "number"},
                     {"name": "Updated", "type": "datetime"},
+                    {"name": "Experiment", "type": "text"},
+                    {"name": "Engine", "type": "text"},
+                    {"name": "Protocol", "type": "text"},
+                    {"name": "GPU", "type": "text"},
+                    {"name": "Family", "type": "text"},
+                    {"name": "Paper Flag", "type": "text"},
+                    {"name": "Paper Caveat", "type": "text"},
+                    {"name": "Harvest Ready", "type": "checkbox"},
                 ]
             }
         }
@@ -804,6 +821,101 @@ class MonitorStateTests(unittest.TestCase):
         self.assertFalse(action["will_send"])
         self.assertIn("not v2-managed", action["reason"])
         self.assertEqual(action["command"], [])
+
+
+class PaperMetadataTests(unittest.TestCase):
+    """Phase 4: paper-experiment metadata flows status.json + manifest -> row -> Feishu."""
+
+    PAPER_TASKS_YAML = """
+defaults:
+  data_root: data
+groups:
+  - name: FlashInfer
+    priority: 1
+    tasks:
+      - id: FI-001
+        name: fused_add_rmsnorm_h2048
+        family: fused_add_rmsnorm
+        baseline_class: torch_compile_or_adapter
+        gpu: B200
+        status: pending
+"""
+
+    def _infra(self) -> Path:
+        tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tempdir.cleanup)
+        root = Path(tempdir.name)
+        (root / "tasks.yaml").write_text(self.PAPER_TASKS_YAML)
+        (root / "orchestrator").mkdir()
+        return root
+
+    def test_status_json_paper_metadata_flows_to_row_and_feishu(self) -> None:
+        root = self._infra()
+        ws = root / "workspaces" / "fi_001_fused_add_rmsnorm_h2048"
+        ws.mkdir(parents=True)
+        (ws / "status.json").write_text(json.dumps({
+            "state": "promoted",
+            "engine": "kersor",
+            "protocol": "KerSor",
+            "experiment_id": "E1-B200-FI26-KerSor-full",
+            "gpu": "B200",
+            "paper_include_flag": "headline",
+            "paper_caveat": "",
+            "best_candidate": "solution.py",
+            "speedup": 1.83,
+            "rounds": 4,
+            "timestamp": "2026-07-04T15:00:00Z",
+        }))
+
+        snapshot = build_local_snapshot(root)
+        task = next(t for t in snapshot["tasks"] if t["id"] == "FI-001")
+
+        # status.json metadata + manifest family/baseline_class reach the row
+        self.assertEqual(task["experiment_id"], "E1-B200-FI26-KerSor-full")
+        self.assertEqual(task["engine"], "kersor")
+        self.assertEqual(task["protocol"], "KerSor")
+        self.assertEqual(task["gpu"], "B200")
+        self.assertEqual(task["paper_include_flag"], "headline")
+        self.assertEqual(task["family"], "fused_add_rmsnorm")
+        self.assertEqual(task["baseline_class"], "torch_compile_or_adapter")
+        self.assertTrue(task["harvest_ready"])  # state == promoted
+
+        row = build_feishu_rows(snapshot, task_filter="FI-001")
+        self.assertEqual(len(row), 1)
+        row = row[0]
+        self.assertEqual(row["Experiment"], "E1-B200-FI26-KerSor-full")
+        self.assertEqual(row["Engine"], "kersor")
+        self.assertEqual(row["Protocol"], "KerSor")
+        self.assertEqual(row["GPU"], "B200")
+        self.assertEqual(row["Family"], "fused_add_rmsnorm")
+        self.assertEqual(row["Paper Flag"], "headline")
+        self.assertTrue(row["Harvest Ready"])
+
+    def test_old_style_status_without_paper_metadata_still_works(self) -> None:
+        root = self._infra()
+        ws = root / "workspaces" / "fi_001_fused_add_rmsnorm_h2048"
+        ws.mkdir(parents=True)
+        (ws / "status.json").write_text(json.dumps({"state": "running", "timestamp": "2026-07-04T00:00:00Z"}))
+
+        snapshot = build_local_snapshot(root)
+        task = next(t for t in snapshot["tasks"] if t["id"] == "FI-001")
+        self.assertIsNone(task["experiment_id"])
+        self.assertEqual(task["family"], "fused_add_rmsnorm")  # manifest still supplies family
+        self.assertFalse(task["harvest_ready"])  # running, not terminal
+
+        row = build_feishu_rows(snapshot, task_filter="FI-001")[0]
+        self.assertEqual(row["Experiment"], "")
+        self.assertEqual(row["Family"], "fused_add_rmsnorm")
+        self.assertFalse(row["Harvest Ready"])
+
+    def test_feishu_field_constants_include_paper_columns_and_keep_old(self) -> None:
+        for col in ("Experiment", "Engine", "Protocol", "GPU", "Family",
+                    "Paper Flag", "Paper Caveat", "Harvest Ready"):
+            self.assertIn(col, FEISHU_ROW_FIELDS)
+            self.assertIn(col, FEISHU_WRITABLE_FIELDS)
+        # backward-compat: existing columns still present
+        for col in ("Task ID", "Status", "Speedup", FEISHU_TASK_NAME_FIELD, "Updated"):
+            self.assertIn(col, FEISHU_ROW_FIELDS)
 
 
 if __name__ == "__main__":

@@ -43,6 +43,16 @@ LEGACY_AUTOKAGGLE_KIND = "autokaggle_legacy"
 FEISHU_TASK_NAME_FIELD = "Task Name"
 FEISHU_LATENCY_PRECISION = 4
 FEISHU_LATENCY_FIELD = "Latency (ms)"
+FEISHU_PAPER_FIELDS = (
+    "Experiment",
+    "Engine",
+    "Protocol",
+    "GPU",
+    "Family",
+    "Paper Flag",
+    "Paper Caveat",
+    "Harvest Ready",
+)
 FEISHU_ROW_FIELDS = (
     "Task ID",
     FEISHU_TASK_NAME_FIELD,
@@ -53,6 +63,7 @@ FEISHU_ROW_FIELDS = (
     FEISHU_LATENCY_FIELD,
     "MFU",
     "Updated",
+    *FEISHU_PAPER_FIELDS,
 )
 FEISHU_WRITABLE_FIELDS = (
     FEISHU_TASK_NAME_FIELD,
@@ -63,6 +74,7 @@ FEISHU_WRITABLE_FIELDS = (
     FEISHU_LATENCY_FIELD,
     "MFU",
     "Updated",
+    *FEISHU_PAPER_FIELDS,
 )
 FEISHU_METRIC_FIELDS = ("Speedup", FEISHU_LATENCY_FIELD, "MFU")
 FEISHU_STATUS_OPTION_ORDER = (
@@ -152,6 +164,15 @@ FEISHU_INIT_FIELD_DEFINITIONS = (
     {"type": "number", "name": FEISHU_LATENCY_FIELD, "style": {"type": "plain", "precision": FEISHU_LATENCY_PRECISION}},
     {"type": "number", "name": "MFU", "style": {"type": "plain", "precision": 4}},
     {"type": "datetime", "name": "Updated", "style": {"format": "yyyy-MM-dd HH:mm"}},
+    # Phase 4: paper-experiment metadata columns (backward-compatible additions).
+    {"type": "text", "name": "Experiment"},
+    {"type": "text", "name": "Engine"},
+    {"type": "text", "name": "Protocol"},
+    {"type": "text", "name": "GPU"},
+    {"type": "text", "name": "Family"},
+    {"type": "text", "name": "Paper Flag"},
+    {"type": "text", "name": "Paper Caveat"},
+    {"type": "checkbox", "name": "Harvest Ready"},
 )
 
 REQUIRED_CONFIG_KEYS = ("ssh_host", "remote_root", "tmux_session", "orchestrator_window")
@@ -1612,6 +1633,12 @@ def normalize_task_row(
         int(benchmark_data.get("candidates") or 0),
         parse_int(status_data.get("solutions_committed")) or 0,
     )
+    # Paper-experiment metadata (Phase 4). Sourced from status.json (written by
+    # start-worker.sh Phase 3) and the task manifest (family/baseline_class).
+    # passed_workloads/total_workloads/best_score are forward-compatible slots
+    # (None until the worker or harvester populates them); sol_score is joined
+    # by the harvester from submissions.csv, never by the monitor.
+    harvest_ready = state in ("promoted", "complete", "abandoned")
     return {
         "id": task_id,
         "group": task.get("group", ""),
@@ -1626,6 +1653,18 @@ def normalize_task_row(
         "updated": status_data.get("timestamp", ""),
         "workspace": workspace,
         "status_error": status_error,
+        "engine": status_data.get("engine"),
+        "protocol": status_data.get("protocol") or task.get("protocol"),
+        "experiment_id": status_data.get("experiment_id"),
+        "gpu": status_data.get("gpu") or task.get("gpu"),
+        "family": task.get("family", ""),
+        "baseline_class": task.get("baseline_class", ""),
+        "paper_include_flag": status_data.get("paper_include_flag", ""),
+        "paper_caveat": status_data.get("paper_caveat", ""),
+        "passed_workloads": status_data.get("passed_workloads"),
+        "total_workloads": status_data.get("total_workloads"),
+        "best_score": status_data.get("best_score"),
+        "harvest_ready": harvest_ready,
     }
 
 
@@ -2248,6 +2287,14 @@ def build_feishu_rows(snapshot: dict[str, Any], task_filter: str | None = None) 
                 FEISHU_LATENCY_FIELD: normalize_feishu_number(task.get("latency"), precision=FEISHU_LATENCY_PRECISION),
                 "MFU": normalize_feishu_number(task.get("mfu"), precision=4),
                 "Updated": normalize_feishu_datetime(task.get("updated") or now),
+                "Experiment": task.get("experiment_id", "") or "",
+                "Engine": task.get("engine", "") or "",
+                "Protocol": task.get("protocol", "") or "",
+                "GPU": task.get("gpu", "") or "",
+                "Family": task.get("family", "") or "",
+                "Paper Flag": task.get("paper_include_flag", "") or "",
+                "Paper Caveat": task.get("paper_caveat", "") or "",
+                "Harvest Ready": bool(task.get("harvest_ready", False)),
                 "_raw_status": task["status"],
             }
         )
