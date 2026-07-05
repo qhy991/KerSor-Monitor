@@ -14,7 +14,7 @@ class Project(BaseModel):
 
 class Task(BaseModel):
     id: str
-    project_id: str
+    project_id: str = ""
     name: str
     spec: str                       # the prompt text the worker reads
     state: str = "PLANNED"

@@ -13,13 +13,13 @@ def create_project(p: models.Project):
     return {"id": p.id}
 
 @router.post("/projects/{pid}/tasks", status_code=201)
-def create_tasks(pid: str, tasks: list[dict]):
-    # Body accepted as dicts: project_id is assigned from the URL path, not sent by the client.
+def create_tasks(pid: str, tasks: list[models.Task]):
+    # project_id is assigned from the URL path; the typed body validates the rest of the fields.
     s = _store()
     if s.get_project(pid) is None:
         raise HTTPException(404, "project not found")
-    for raw in tasks:
-        t = models.Task(project_id=pid, **raw)
+    for t in tasks:
+        t.project_id = pid
         t.state = state.transition(t.state, "QUEUED") if t.state == "PLANNED" else t.state
         s.create_task(t)
     return {"created": len(tasks)}
