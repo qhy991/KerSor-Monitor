@@ -1,18 +1,14 @@
 __pycache__/
 *.pyc
-*.egg-info/
 .venv/
+flotilla.db
+workspaces/
 outputs/
-baseline-results/
-workspaces/*/outputs/
-workspaces/*/profile/
-workspaces/*/runs/
-workspaces/*/candidates/
-workspaces/*/.git/
-orchestrator/logs/
-orchestrator/state.json
-config/local-monitor.yaml
-telemetry/
-outputs/telemetry/
 *.log
 .DS_Store
+node_modules/
+dashboard/dist/
+# local deployment config (carried over from kda-monitor; not platform code)
+config/local-monitor.yaml
+# superpowers sdd scratch (task briefs, reports, ledger)
+.superpowers/
