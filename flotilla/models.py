@@ -1,0 +1,46 @@
+from __future__ import annotations
+from datetime import datetime, timezone
+from typing import Any
+from pydantic import BaseModel, Field
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+class Project(BaseModel):
+    id: str
+    name: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=_now)
+
+class Task(BaseModel):
+    id: str
+    project_id: str
+    name: str
+    spec: str                       # the prompt text the worker reads
+    state: str = "PLANNED"
+    workspace_path: str | None = None
+    runtime: str = "claude_tmux"    # adapter name
+    resource_req: dict[str, Any] = Field(default_factory=dict)  # e.g. {"kind":"gpu"} or {}
+    evaluator: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=_now)
+    updated_at: str = Field(default_factory=_now)
+
+class Worker(BaseModel):
+    id: str
+    task_id: str
+    status: str = "running"         # kda-monitor status.json state value
+    session_handle: str | None = None
+    pane_id: str | None = None
+    pid: int | None = None
+    resource_lock_id: str | None = None
+    started_at: str = Field(default_factory=_now)
+    ended_at: str | None = None
+    extra: dict[str, Any] = Field(default_factory=dict)  # carries paper-metadata etc.
+
+class Event(BaseModel):
+    id: int | None = None
+    task_id: str
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    ts: str = Field(default_factory=_now)
