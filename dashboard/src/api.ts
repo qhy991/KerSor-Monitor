@@ -1,4 +1,4 @@
-import type { Task } from './types';
+import type { Task, Host } from './types';
 const base = '';
 
 export async function listTasks(pid: string): Promise<Task[]> {
@@ -38,7 +38,6 @@ export async function createTasks(
   return r.json();
 }
 
-/** Create the project if it doesn't exist, then post the task(s). */
 export async function ensureProjectAndCreateTasks(
   pid: string,
   tasks: {
@@ -74,4 +73,26 @@ export function subscribe(tid: string, onEvt: (t: Task) => void): EventSource {
   const es = new EventSource(`${base}/tasks/${tid}/events`);
   es.onmessage = (e) => onEvt(JSON.parse(e.data));
   return es;
+}
+
+// --- hosts (accessible hardware) ---
+export async function getHosts(): Promise<Host[]> {
+  const r = await fetch(`${base}/hosts`);
+  return r.json();
+}
+export async function createHost(h: {
+  id: string;
+  ssh_alias: string;
+  remote_root: string;
+  gpu?: string | null;
+  notes?: string;
+}): Promise<void> {
+  await fetch(`${base}/hosts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(h),
+  });
+}
+export async function deleteHost(id: string): Promise<void> {
+  await fetch(`${base}/hosts/${id}`, { method: 'DELETE' });
 }

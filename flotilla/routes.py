@@ -34,6 +34,24 @@ def get_task(tid: str):
 def list_tasks(pid: str):
     return _store().list_tasks(pid)
 
+# --- hosts (accessible hardware) ---
+@router.get("/hosts")
+def list_hosts():
+    return _store().list_hosts()
+
+@router.post("/hosts", status_code=201)
+def create_host(h: models.Host):
+    s = _store()
+    if s.get_host(h.id) is not None:
+        raise HTTPException(409, f"host {h.id} already exists")
+    s.create_host(h)
+    return {"id": h.id}
+
+@router.delete("/hosts/{hid}")
+def delete_host(hid: str):
+    _store().delete_host(hid)
+    return {"deleted": hid}
+
 @router.post("/tasks/{tid}/actuate", status_code=202)
 def actuate(tid: str, body: dict):
     t = _store().get_task(tid)

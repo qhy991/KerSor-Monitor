@@ -125,3 +125,23 @@ body { background: var(--bg); color: var(--text); }
 .hint b { color: var(--text); font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 .err { color: var(--bad); font-size: 13px; }
 
+/* hardware config panel */
+.hardware {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 20px; box-shadow: var(--shadow-sm);
+}
+.hardware-head { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-dim); margin-bottom: 10px; }
+.host-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.host-row { display: flex; align-items: center; gap: 12px; font-size: 13px; padding: 6px 0;
+  border-bottom: 1px solid var(--border); }
+.host-row:last-child { border-bottom: none; }
+.host-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 600; min-width: 70px; }
+.host-meta { color: var(--text-dim); min-width: 140px; }
+.host-root { color: var(--text-dim); flex: 1; font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.host-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.input-sm { width: 130px; }
+.input-wide { flex: 1; min-width: 200px; }
+.btn-mini { padding: 4px 10px; font-size: 12px; margin-left: auto; }
+

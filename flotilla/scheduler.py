@@ -22,15 +22,23 @@ def tick(store, workspaces_root: Path | None = None) -> int:
         lock = _res.get(rkind).acquire(task.id, task.resource_req) if rkind else None
         if rkind and lock is None:
             continue   # resource busy; leave queued, try next task
-        # workspace path: local under wsroot, or remote under remote_workspaces_root
+        # workspace path: local under wsroot, or remote — resolve host config if set
         if task.target_host:
-            ws_path = f"{config.SETTINGS.remote_workspaces_root}/ws_{task.id}"
+            host = store.get_host(task.target_host)
+            if host:
+                ws_path = f"{host.remote_root}/ws_{task.id}"
+                ssh_host = host.ssh_alias
+            else:
+                # host id not configured — treat target_host as a raw ssh alias (fallback)
+                ws_path = f"{config.SETTINGS.remote_workspaces_root}/ws_{task.id}"
+                ssh_host = task.target_host
         else:
             ws_path = wsroot / f"ws_{task.id}"
+            ssh_host = None
         # the runtime creates the workspace (local mkdir or remote via ssh) + writes
         # combined_prompt.md + status.json + start.sh, then spawns claude in tmux.
         handle = rt.start(task_id=task.id, workspace=ws_path, resource=lock,
-                          host=task.target_host, spec=task.spec, metadata=task.metadata)
+                          host=ssh_host, spec=task.spec, metadata=task.metadata)
         store.set_workspace(task.id, str(handle.workspace))
         wid = f"w_{task.id}"
         h = handle.handle if isinstance(handle.handle, dict) else {}

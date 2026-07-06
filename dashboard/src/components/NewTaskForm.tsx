@@ -1,7 +1,16 @@
 import { useState } from 'react';
+import type { Host } from '../types';
 import { ensureProjectAndCreateTasks } from '../api';
 
-export function NewTaskForm({ pid, onSubmitted }: { pid: string; onSubmitted: () => void }) {
+export function NewTaskForm({
+  pid,
+  hosts,
+  onSubmitted,
+}: {
+  pid: string;
+  hosts: Host[];
+  onSubmitted: () => void;
+}) {
   const [spec, setSpec] = useState(
     'Write a pytest test_doubler.py that checks doubler(2) == 4.',
   );
@@ -57,7 +66,12 @@ export function NewTaskForm({ pid, onSubmitted }: { pid: string; onSubmitted: ()
           target host
           <select className="select" value={host} onChange={(e) => setHost(e.target.value)}>
             <option value="local">local</option>
-            <option value="verda">verda (B200, ssh)</option>
+            {hosts.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.id}
+                {h.gpu ? ` (${h.gpu})` : ''}
+              </option>
+            ))}
           </select>
         </label>
       </div>

@@ -93,3 +93,23 @@ class Store:
             rows = c.execute("SELECT * FROM event WHERE task_id=? ORDER BY id", (tid,)).fetchall()
         return [models.Event(id=r["id"], task_id=r["task_id"], type=r["type"],
                              payload=json.loads(r["payload"]), ts=r["ts"]) for r in rows]
+
+    # --- hosts (accessible hardware) ---
+    def create_host(self, h: models.Host) -> None:
+        with self._conn() as c:
+            c.execute("INSERT INTO host(id,ssh_alias,remote_root,gpu,notes,created_at) VALUES(?,?,?,?,?,?)",
+                      (h.id, h.ssh_alias, h.remote_root, h.gpu, h.notes, h.created_at))
+    def list_hosts(self) -> list[models.Host]:
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM host ORDER BY id").fetchall()
+        return [models.Host(id=r["id"], ssh_alias=r["ssh_alias"], remote_root=r["remote_root"],
+                            gpu=r["gpu"], notes=r["notes"], created_at=r["created_at"]) for r in rows]
+    def get_host(self, hid: str) -> models.Host | None:
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM host WHERE id=?", (hid,)).fetchone()
+        if not r: return None
+        return models.Host(id=r["id"], ssh_alias=r["ssh_alias"], remote_root=r["remote_root"],
+                           gpu=r["gpu"], notes=r["notes"], created_at=r["created_at"])
+    def delete_host(self, hid: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM host WHERE id=?", (hid,))

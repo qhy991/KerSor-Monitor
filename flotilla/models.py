@@ -46,3 +46,11 @@ class Event(BaseModel):
     type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     ts: str = Field(default_factory=_now)
+
+class Host(BaseModel):
+    id: str               # alias shown in the UI, e.g. "verda"
+    ssh_alias: str        # ssh host alias used to reach it, e.g. "verda"
+    remote_root: str = "/home/qinhaiyan/flotilla-workspaces"  # where workspaces live on that host
+    gpu: str | None = None  # e.g. "B200"; informational
+    notes: str = ""
+    created_at: str = Field(default_factory=_now)
