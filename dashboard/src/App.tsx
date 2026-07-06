@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { TaskGrid } from './components/TaskGrid';
+import { NewTaskForm } from './components/NewTaskForm';
 
 export default function App() {
   const [pid, setPid] = useState('demo');
+  const [reloadKey, setReloadKey] = useState(0);
   return (
     <div className="app">
       <div className="header">
@@ -19,7 +21,8 @@ export default function App() {
           />
         </label>
       </div>
-      <TaskGrid pid={pid} />
+      <NewTaskForm pid={pid} onSubmitted={() => setReloadKey((k) => k + 1)} />
+      <TaskGrid pid={pid} reloadKey={reloadKey} />
     </div>
   );
 }
