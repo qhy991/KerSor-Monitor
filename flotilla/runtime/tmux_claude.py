@@ -51,7 +51,8 @@ class ClaudeCodeTmuxRuntime:
     def paste(self, handle: WorkerHandle, text: str) -> None:
         subprocess.run(["tmux", "send-keys", "-t", handle.handle["pane"], text, "C-m"], check=True)
     def stop(self, handle: WorkerHandle) -> None:
-        subprocess.run(["tmux", "kill-window", "-t", handle.handle["window"]], check=False)
+        h = handle.handle
+        subprocess.run(["tmux", "kill-window", "-t", f"{h['session']}:{h['window']}"], check=False)
     def wait(self, handle: WorkerHandle, timeout: float = 30.0) -> None:
         end = time.time() + timeout
         while time.time() < end:
