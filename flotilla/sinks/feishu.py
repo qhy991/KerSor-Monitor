@@ -25,7 +25,7 @@ class FeishuSink:
         return {
             "Task ID": t.get("id"), "Task Name": t.get("name"), "Status": t.get("state"),
             "Round": t.get("rounds", 0), "Candidates": t.get("candidates", 0),
-            "Speedup": t.get("speedup"), "Updated": t.get("updated"),
+            "Speedup": t.get("speedup"), "Updated": t.get("updated") or t.get("timestamp"),
             # paper-metadata fields pass through if present, else blank
             **{k: t.get(k.lower().replace(" ", "_"), "") for k in
                ["Experiment", "Engine", "Protocol", "GPU", "Family",

@@ -19,6 +19,12 @@ def subscribe(task_id: str) -> queue.Queue:
     with _LOCK: _SUBS.setdefault(task_id, []).append(q)
     return q
 
+def unsubscribe(task_id: str, q) -> None:
+    with _LOCK:
+        subs = _SUBS.get(task_id)
+        if subs and q in subs:
+            subs.remove(q)
+
 def _emit(task_id: str, payload: dict) -> None:
     with _LOCK: subs = list(_SUBS.get(task_id, []))
     for q in subs:

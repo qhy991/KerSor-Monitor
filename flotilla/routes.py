@@ -51,11 +51,14 @@ from . import sinks as _sinks
 def events(tid: str):
     def gen():
         q = _sinks.web.subscribe(tid)
-        # seed with current snapshot
-        for t in _sinks.web.latest().get("tasks", []):
-            if t.get("id") == tid:
-                yield f"data: {_json.dumps(t)}\n\n"
-        while True:
-            payload = q.get()
-            yield f"data: {_json.dumps(payload)}\n\n"
+        try:
+            # seed with current snapshot
+            for t in _sinks.web.latest().get("tasks", []):
+                if t.get("id") == tid:
+                    yield f"data: {_json.dumps(t)}\n\n"
+            while True:
+                payload = q.get()
+                yield f"data: {_json.dumps(payload)}\n\n"
+        finally:
+            _sinks.web.unsubscribe(tid, q)
     return StreamingResponse(gen(), media_type="text/event-stream")
