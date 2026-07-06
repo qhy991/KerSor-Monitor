@@ -18,9 +18,14 @@ def tick(store, workspaces_root: Path | None = None) -> int:
     for task in store.queued_tasks():
         if started >= capacity: break
         rt = runtime.get(task.runtime)
+        from . import resource as _res
+        rkind = task.resource_req.get("kind")
+        lock = _res.get(rkind).acquire(task.id, task.resource_req) if rkind else None
+        if rkind and lock is None:
+            continue   # resource busy; leave queued, try next task
         ws = create_workspace(wsroot, task.id, task.spec)
         store.set_workspace(task.id, str(ws))
-        handle = rt.start(task_id=task.id, workspace=ws)
+        handle = rt.start(task_id=task.id, workspace=ws, resource=lock)
         wid = f"w_{task.id}"
         store.create_worker(models.Worker(id=wid, task_id=task.id, session_handle=handle.handle if isinstance(handle.handle,str) else None))
         from . import actuator as _act
