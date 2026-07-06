@@ -43,6 +43,19 @@ def actuate(tid: str, body: dict):
     if not res["ok"]: raise HTTPException(409, res.get("reason", "actuate failed"))
     return res
 
+from fastapi.responses import StreamingResponse
+import json as _json
+from . import sinks as _sinks
+
 @router.get("/tasks/{tid}/events")
 def events(tid: str):
-    return _store().events_for(tid)
+    def gen():
+        q = _sinks.web.subscribe(tid)
+        # seed with current snapshot
+        for t in _sinks.web.latest().get("tasks", []):
+            if t.get("id") == tid:
+                yield f"data: {_json.dumps(t)}\n\n"
+        while True:
+            payload = q.get()
+            yield f"data: {_json.dumps(payload)}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream")

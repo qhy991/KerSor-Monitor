@@ -24,4 +24,10 @@ def observe_and_record(store: Store, worker_id: str, handle: WorkerHandle) -> di
         "timestamp": status.get("timestamp", ""),
     }
     store.append_event(models.Event(task_id=handle.task_id, type="status", payload=rec))
+    from . import sinks
+    tasks = [{"id": t.id, "name": t.name, "state": t.state, **rec} for t in store.list_tasks(_project_of(store, handle.task_id))]
+    sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
     return rec
+
+def _project_of(store, task_id):
+    t = store.get_task(task_id); return t.project_id if t else ""
