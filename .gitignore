@@ -12,3 +12,4 @@ dashboard/dist/
 config/local-monitor.yaml
 # superpowers sdd scratch (task briefs, reports, ledger)
 .superpowers/
+flotilla.egg-info/

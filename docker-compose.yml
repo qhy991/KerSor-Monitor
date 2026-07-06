@@ -1,0 +1,13 @@
+version: "3.9"
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data          # persists flotilla.db + workspaces/
+    environment:
+      - FLOTILLA_START_SCHEDULER=1   # run the patrol loop so seeded tasks start
+    restart: unless-stopped

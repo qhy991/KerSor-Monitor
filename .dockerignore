@@ -1,0 +1,13 @@
+.venv/
+**/node_modules/
+dashboard/dist/
+data/
+workspaces/
+outputs/
+*.db
+**/__pycache__/
+.pytest_cache/
+.superpowers/
+.DS_Store
+flotilla.egg-info/
+.git/

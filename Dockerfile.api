@@ -1,0 +1,25 @@
+# --- stage 1: build the React dashboard -------------------------------------
+FROM node:20-slim AS dashboard
+WORKDIR /dash
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+COPY dashboard/ ./
+RUN npm run build
+
+# --- stage 2: the FastAPI api (+ serves the built dashboard) ----------------
+FROM python:3.12-slim
+WORKDIR /app
+# tmux is required by the ClaudeCodeTmuxRuntime adapter (GPU/kernel workers).
+RUN apt-get update && apt-get install -y --no-install-recommends tmux \
+    && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml ./
+COPY flotilla ./flotilla
+# Built dashboard from stage 1 — app.create_app mounts it at "/" (guarded on
+# dist/ existing) so a single container serves both the API and the dashboard.
+COPY --from=dashboard /dash/dist ./dashboard/dist
+RUN pip install --no-cache-dir . uvicorn[standard]
+ENV FLOTILLA_DB=/data/flotilla.db \
+    FLOTILLA_WORKSPACES=/data/workspaces \
+    FLOTILLA_START_SCHEDULER=1
+EXPOSE 8000
+CMD ["uvicorn", "flotilla.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
