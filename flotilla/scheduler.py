@@ -2,7 +2,6 @@ from __future__ import annotations
 import time, threading
 from pathlib import Path
 from . import config, models, runtime, observer
-from .workspace import create_workspace
 
 def _observe(store, worker_id, handle):
     try: observer.observe_and_record(store, worker_id, handle)
@@ -23,11 +22,23 @@ def tick(store, workspaces_root: Path | None = None) -> int:
         lock = _res.get(rkind).acquire(task.id, task.resource_req) if rkind else None
         if rkind and lock is None:
             continue   # resource busy; leave queued, try next task
-        ws = create_workspace(wsroot, task.id, task.spec)
-        store.set_workspace(task.id, str(ws))
-        handle = rt.start(task_id=task.id, workspace=ws, resource=lock)
+        # workspace path: local under wsroot, or remote under remote_workspaces_root
+        if task.target_host:
+            ws_path = f"{config.SETTINGS.remote_workspaces_root}/ws_{task.id}"
+        else:
+            ws_path = wsroot / f"ws_{task.id}"
+        # the runtime creates the workspace (local mkdir or remote via ssh) + writes
+        # combined_prompt.md + status.json + start.sh, then spawns claude in tmux.
+        handle = rt.start(task_id=task.id, workspace=ws_path, resource=lock,
+                          host=task.target_host, spec=task.spec, metadata=task.metadata)
+        store.set_workspace(task.id, str(handle.workspace))
         wid = f"w_{task.id}"
-        store.create_worker(models.Worker(id=wid, task_id=task.id, session_handle=handle.handle if isinstance(handle.handle,str) else None))
+        h = handle.handle if isinstance(handle.handle, dict) else {}
+        store.create_worker(models.Worker(
+            id=wid, task_id=task.id, status="running",
+            session_handle=h.get("pane"), session_uuid=h.get("session_uuid"),
+            pane_id=h.get("pane"), resource_lock_id=(lock.resource_id if lock else None),
+        ))
         from . import actuator as _act
         _act.register(task.id, wid, handle)
         store.set_task_state(task.id, "RUNNING")

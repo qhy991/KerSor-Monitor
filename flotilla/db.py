@@ -7,11 +7,11 @@ CREATE TABLE IF NOT EXISTS project(
   id TEXT PRIMARY KEY, name TEXT, config TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS task(
   id TEXT PRIMARY KEY, project_id TEXT, name TEXT, spec TEXT, state TEXT,
-  workspace_path TEXT, runtime TEXT, resource_req TEXT, evaluator TEXT,
+  workspace_path TEXT, runtime TEXT, target_host TEXT, resource_req TEXT, evaluator TEXT,
   metadata TEXT, created_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS worker(
   id TEXT PRIMARY KEY, task_id TEXT, status TEXT, session_handle TEXT,
-  pane_id TEXT, pid INTEGER, resource_lock_id TEXT, started_at TEXT,
+  session_uuid TEXT, pane_id TEXT, pid INTEGER, resource_lock_id TEXT, started_at TEXT,
   ended_at TEXT, extra TEXT);
 CREATE TABLE IF NOT EXISTS resource_lock(
   id TEXT PRIMARY KEY, resource_id TEXT, worker_id TEXT, slot INTEGER, acquired_at TEXT);

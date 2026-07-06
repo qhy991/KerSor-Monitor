@@ -16,7 +16,14 @@ export async function createProject(pid: string, name: string = pid): Promise<vo
 
 export async function createTasks(
   pid: string,
-  tasks: { id: string; name: string; spec: string; runtime: string; evaluator?: string | null }[],
+  tasks: {
+    id: string;
+    name: string;
+    spec: string;
+    runtime: string;
+    evaluator?: string | null;
+    target_host?: string | null;
+  }[],
 ): Promise<{ created: number }> {
   const r = await fetch(`${base}/projects/${pid}/tasks`, {
     method: 'POST',
@@ -34,7 +41,14 @@ export async function createTasks(
 /** Create the project if it doesn't exist, then post the task(s). */
 export async function ensureProjectAndCreateTasks(
   pid: string,
-  tasks: { id: string; name: string; spec: string; runtime: string; evaluator?: string | null }[],
+  tasks: {
+    id: string;
+    name: string;
+    spec: string;
+    runtime: string;
+    evaluator?: string | null;
+    target_host?: string | null;
+  }[],
 ): Promise<{ created: number }> {
   try {
     return await createTasks(pid, tasks);

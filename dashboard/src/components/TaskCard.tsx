@@ -21,7 +21,15 @@ export function TaskCard({ t }: { t: Task }) {
           candidates <b>{t.candidates ?? 0}</b>
         </span>
       </div>
-      <div className="card-runtime">{t.runtime}</div>
+      <div className="card-runtime">
+        {t.runtime}
+        {t.target_host ? ` · host=${t.target_host}` : ' · local'}
+      </div>
+      {t.session_uuid && (
+        <div className="card-session" title={t.session_uuid}>
+          session {t.session_uuid.slice(0, 8)}
+        </div>
+      )}
       {(t.state === 'STUCK' || t.state === 'RUNNING' || t.state === 'PAUSED') && (
         <NudgeButton tid={t.id} />
       )}

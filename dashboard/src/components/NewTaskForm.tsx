@@ -7,6 +7,7 @@ export function NewTaskForm({ pid, onSubmitted }: { pid: string; onSubmitted: ()
   );
   const [runtime, setRuntime] = useState('shell');
   const [evaluator, setEvaluator] = useState('pytest');
+  const [host, setHost] = useState('local');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -18,7 +19,14 @@ export function NewTaskForm({ pid, onSubmitted }: { pid: string; onSubmitted: ()
     const id = `t-${Math.random().toString(36).slice(2, 8)}`;
     try {
       await ensureProjectAndCreateTasks(pid, [
-        { id, name: id, spec: spec.trim(), runtime, evaluator: evaluator || null },
+        {
+          id,
+          name: id,
+          spec: spec.trim(),
+          runtime,
+          evaluator: evaluator || null,
+          target_host: host === 'local' ? null : host,
+        },
       ]);
       onSubmitted();
     } catch (e2) {
@@ -45,6 +53,13 @@ export function NewTaskForm({ pid, onSubmitted }: { pid: string; onSubmitted: ()
             <option value="pytest">pytest</option>
           </select>
         </label>
+        <label className="field">
+          target host
+          <select className="select" value={host} onChange={(e) => setHost(e.target.value)}>
+            <option value="local">local</option>
+            <option value="verda">verda (B200, ssh)</option>
+          </select>
+        </label>
       </div>
       <textarea
         className="textarea"
@@ -55,7 +70,8 @@ export function NewTaskForm({ pid, onSubmitted }: { pid: string; onSubmitted: ()
       />
       <div className="newtask-row newtask-foot">
         <span className="hint">
-          submits to project <b>{pid || '—'}</b> (auto-created if new)
+          submits to project <b>{pid || '—'}</b> on <b>{host}</b>
+          {runtime === 'claude_tmux' ? '' : ' · shell runs `true` (no real work)'}
         </span>
         <button className="btn" disabled={busy || !spec.trim() || !pid.trim()}>
           {busy ? 'Submitting…' : '＋ Submit task'}

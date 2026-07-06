@@ -20,6 +20,7 @@ class Task(BaseModel):
     state: str = "PLANNED"
     workspace_path: str | None = None
     runtime: str = "claude_tmux"    # adapter name
+    target_host: str | None = None  # ssh host for remote execution (None = local)
     resource_req: dict[str, Any] = Field(default_factory=dict)  # e.g. {"kind":"gpu"} or {}
     evaluator: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -31,6 +32,7 @@ class Worker(BaseModel):
     task_id: str
     status: str = "running"         # kda-monitor status.json state value
     session_handle: str | None = None
+    session_uuid: str | None = None  # claude conversation session uuid (mined from ~/.claude/projects)
     pane_id: str | None = None
     pid: int | None = None
     resource_lock_id: str | None = None
