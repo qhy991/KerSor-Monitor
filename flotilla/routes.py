@@ -38,10 +38,10 @@ def list_tasks(pid: str):
 def actuate(tid: str, body: dict):
     t = _store().get_task(tid)
     if t is None: raise HTTPException(404, "task not found")
-    # Real actuation wired in Task 7 (Actuator). For now record intent as an event.
-    _store().append_event(models.Event(task_id=tid, type="actuate",
-                                       payload={"action": body.get("action")}))
-    return {"accepted": True}
+    from . import actuator
+    res = actuator.actuate(_store(), tid, body.get("action", ""), body.get("payload", {}))
+    if not res["ok"]: raise HTTPException(409, res.get("reason", "actuate failed"))
+    return res
 
 @router.get("/tasks/{tid}/events")
 def events(tid: str):

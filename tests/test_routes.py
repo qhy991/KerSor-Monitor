@@ -20,10 +20,10 @@ def test_create_project_and_tasks(client):
     r = client.get("/tasks/t1")
     assert r.json()["state"] == "QUEUED"  # POSTing a task queues it
 
-def test_illegal_state_change_400(client):
+def test_actuate_without_live_worker_409(client):
     client.post("/projects", json={"id": "p1", "name": "demo"})
     client.post("/projects/p1/tasks", json=[{"id": "t1", "name": "a", "spec": "x"}])
-    # t1 is QUEUED; try to advance to DONE directly via internal helper is not exposed;
-    # actuate stub just records, returns 202
+    # t1 is QUEUED with no live worker handle registered; actuate must refuse with 409
+    # (nudge has nowhere to go). The 202 path is covered by test_actuator at the unit level.
     r = client.post("/tasks/t1/actuate", json={"action": "nudge", "payload": {}})
-    assert r.status_code == 202
+    assert r.status_code == 409
