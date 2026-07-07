@@ -37,6 +37,11 @@ export function TaskCard({ t }: { t: Task }) {
           {t.last_activity}
         </div>
       )}
+      {t.pane_tail && (
+        <div className="card-pane">
+          <pre>{t.pane_tail}</pre>
+        </div>
+      )}
       {(t.state === 'STUCK' || t.state === 'RUNNING' || t.state === 'PAUSED') && (
         <NudgeButton tid={t.id} />
       )}
