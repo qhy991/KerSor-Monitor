@@ -34,6 +34,8 @@ kersor_arm_flags() {
         StaticRule)         printf -- '--mode score-only' ;;             # deterministic score, no model
         LLMSelfSelection)   printf -- '--mode llm-raw-catalog' ;;        # model picks from unfiltered catalog
         no-trust-gate)      printf -- '--acceptance-gate report-only' ;; # measure+record, do not veto
+        # --- RQ5 randomized routing (needs --explore-epsilon; flags added by caller) ---
+        Randomized)         printf '' ;;                                  # epsilon supplied via --explore-epsilon
         *)                  return 1 ;;
     esac
 }
@@ -42,8 +44,16 @@ kersor_arm_flags() {
 # exists; the pending state is retained for arms whose mode is not yet merged.
 kersor_arm_state() {
     case "$1" in
-        KerSor-full|FixedOrder|no-handoff|no-WSR|BestSingle|KDA-style-single|StaticRule|LLMSelfSelection|no-trust-gate) printf 'live' ;;
+        KerSor-full|FixedOrder|no-handoff|no-WSR|BestSingle|KDA-style-single|StaticRule|LLMSelfSelection|no-trust-gate|Randomized) printf 'live' ;;
         *) printf '' ;;
+    esac
+}
+
+# Whether the arm requires an explicit --explore-epsilon.
+kersor_arm_needs_epsilon() {
+    case "$1" in
+        Randomized) return 0 ;;
+        *) return 1 ;;
     esac
 }
 
@@ -57,5 +67,5 @@ kersor_arm_needs_workflow() {
 
 kersor_arm_list() {
     printf '%s\n' KerSor-full FixedOrder no-handoff no-WSR BestSingle \
-        KDA-style-single StaticRule LLMSelfSelection no-trust-gate
+        KDA-style-single StaticRule LLMSelfSelection no-trust-gate Randomized
 }

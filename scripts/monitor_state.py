@@ -1665,6 +1665,7 @@ def normalize_task_row(
         "arm_flags": status_data.get("arm_flags", ""),
         "run_seed": status_data.get("run_seed"),
         "max_dispatches": status_data.get("max_dispatches"),
+        "explore_epsilon": status_data.get("explore_epsilon"),
         "passed_workloads": status_data.get("passed_workloads"),
         "total_workloads": status_data.get("total_workloads"),
         "best_score": status_data.get("best_score"),

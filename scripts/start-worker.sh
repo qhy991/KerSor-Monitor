@@ -30,6 +30,7 @@ ARM="${KDA_ARM:-}"
 ARM_WORKFLOW="${KDA_ARM_WORKFLOW:-}"      # single workflow for BestSingle / KDA-style-single
 RUN_SEED="${KDA_RUN_SEED:-}"              # E3 reproducibility seed (recorded)
 MAX_DISPATCHES="${KDA_MAX_DISPATCHES:-}"  # E3 dispatch budget -> --max-workflows
+EXPLORE_EPSILON="${KDA_EXPLORE_EPSILON:-}"  # RQ5 randomized-routing rate for the Randomized arm
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/kersor-arms.sh"
 
@@ -62,6 +63,8 @@ while [ $# -gt 0 ]; do
             RUN_SEED="$2"; shift 2 ;;
         --max-dispatches)
             MAX_DISPATCHES="$2"; shift 2 ;;
+        --explore-epsilon)
+            EXPLORE_EPSILON="$2"; shift 2 ;;
         --dry-run)
             DRY_RUN=1; shift ;;
         --help|-h)
@@ -77,6 +80,7 @@ while [ $# -gt 0 ]; do
             echo "  --arm-workflow <name>                       single workflow for BestSingle / KDA-style-single"
             echo "  --run-seed <int>                            E3 reproducibility seed (recorded in status.json)"
             echo "  --max-dispatches <int>                      E3 dispatch budget -> /kersor:optimize --max-workflows"
+            echo "  --explore-epsilon <0..1>                    RQ5 randomized-routing rate (requires --arm Randomized)"
             echo "  --dry-run                                   write status.json + combined_prompt.md, do not launch"
             echo "Arms: $(kersor_arm_list | tr '\n' ' ')"
             echo "Example: $0 FI-002 --engine kersor --experiment-id E1-B200-FI26-KerSor-full --gpu B200 --arm KerSor-full"
@@ -136,7 +140,22 @@ if [ -n "$ARM" ]; then
     if kersor_arm_needs_workflow "$ARM" && [ -z "$ARM_WORKFLOW" ]; then
         echo "ERROR: --arm '$ARM' requires --arm-workflow <name> (the single workflow to pin)." >&2; exit 1
     fi
+    if kersor_arm_needs_epsilon "$ARM" && [ -z "$EXPLORE_EPSILON" ]; then
+        echo "ERROR: --arm '$ARM' requires --explore-epsilon <0..1> (the randomized-routing rate)." >&2; exit 1
+    fi
     ARM_FLAGS="$(kersor_arm_flags "$ARM" "$ARM_WORKFLOW")"
+fi
+# Randomized routing rate (RQ5): validate and append to the optimize flags. Only
+# an arm that opts in (Randomized) may set it; a bare --explore-epsilon on a
+# non-randomized arm is rejected so the logged propensity always matches the arm.
+if [ -n "$EXPLORE_EPSILON" ]; then
+    if ! awk -v e="$EXPLORE_EPSILON" 'BEGIN{exit !(e ~ /^[0-9]*\.?[0-9]+$/ && e+0 >= 0 && e+0 <= 1)}'; then
+        echo "ERROR: --explore-epsilon must be a number in [0,1] (got: $EXPLORE_EPSILON)" >&2; exit 1
+    fi
+    if [ -n "$ARM" ] && ! kersor_arm_needs_epsilon "$ARM"; then
+        echo "ERROR: --explore-epsilon is only valid with --arm Randomized (got arm: $ARM)" >&2; exit 1
+    fi
+    ARM_FLAGS="${ARM_FLAGS:+$ARM_FLAGS }--explore-epsilon $EXPLORE_EPSILON"
 fi
 # E3 dispatch budget maps to --max-workflows unless the arm already pinned it.
 if [ -n "$MAX_DISPATCHES" ]; then
@@ -259,14 +278,14 @@ fi
 # which would break the worker's read-modify-write status tracking.
 python3 - "$WORKSPACE/status.json" "$ENGINE" "$PROTOCOL" "$EXPERIMENT_ID" "$GPU" \
               "$PAPER_INCLUDE_FLAG" "$PAPER_CAVEAT" "$TASK_ID" \
-              "$ARM" "$ARM_FLAGS" "$RUN_SEED" "$MAX_DISPATCHES" <<'PY'
+              "$ARM" "$ARM_FLAGS" "$RUN_SEED" "$MAX_DISPATCHES" "$EXPLORE_EPSILON" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 (path, engine, protocol, experiment_id, gpu, flag, caveat, task_id,
- arm, arm_flags, run_seed, max_dispatches) = sys.argv[1:13]
+ arm, arm_flags, run_seed, max_dispatches, explore_epsilon) = sys.argv[1:14]
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 Path(path).write_text(
     json.dumps(
@@ -283,6 +302,7 @@ Path(path).write_text(
             "arm_flags": arm_flags,
             "run_seed": int(run_seed) if run_seed.isdigit() else None,
             "max_dispatches": int(max_dispatches) if max_dispatches.isdigit() else None,
+            "explore_epsilon": float(explore_epsilon) if explore_epsilon else None,
             "started_at": now,
             "best_candidate": None,
             "speedup": None,

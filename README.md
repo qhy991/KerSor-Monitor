@@ -294,6 +294,7 @@ bash scripts/start-worker.sh FI-001 --engine kersor --gpu B200 \
 | `StaticRule` | live | `--mode score-only` |
 | `LLMSelfSelection` | live | `--mode llm-raw-catalog` |
 | `no-trust-gate` | live | `--acceptance-gate report-only` |
+| `Randomized` | live | `--explore-epsilon <N>` (needs `--explore-epsilon`; RQ5 IPS/SNIPS) |
 
 All arms launch (the KerSor modes landed in P2). `--max-dispatches N` maps to
 `--max-workflows N` (skipped when an arm already pins the budget); `--run-seed`

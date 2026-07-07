@@ -182,6 +182,30 @@ class ArmTests(StartWorkerDryRunTests):
         proc = self._run_expect_fail(root, "--arm", "KerSor-full", "--run-seed", "abc")
         self.assertIn("--run-seed", proc.stderr)
 
+    def test_randomized_arm_requires_epsilon(self) -> None:
+        root = self._make_infra()
+        proc = self._run_expect_fail(root, "--arm", "Randomized")
+        self.assertIn("--explore-epsilon", proc.stderr)
+
+    def test_randomized_arm_appends_epsilon_flag(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "Randomized", "--explore-epsilon", "0.1")
+        status = self._status(root)
+        self.assertEqual(status["arm_flags"], "--explore-epsilon 0.1")
+        self.assertEqual(status["explore_epsilon"], 0.1)
+        combined = self._combined(root)
+        self.assertIn("--explore-epsilon 0.1", combined)
+
+    def test_epsilon_rejected_on_non_randomized_arm(self) -> None:
+        root = self._make_infra()
+        proc = self._run_expect_fail(root, "--arm", "KerSor-full", "--explore-epsilon", "0.1")
+        self.assertIn("only valid with --arm Randomized", proc.stderr)
+
+    def test_bad_epsilon_rejected(self) -> None:
+        root = self._make_infra()
+        proc = self._run_expect_fail(root, "--arm", "Randomized", "--explore-epsilon", "2")
+        self.assertIn("number in [0,1]", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
