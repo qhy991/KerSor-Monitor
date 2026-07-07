@@ -270,6 +270,37 @@ and a metadata block in `runs/combined_prompt.md`. `--protocol` defaults from
 `status.json` to preserve these fields across updates. Use `--dry-run` to write
 `status.json` + `combined_prompt.md` without launching a worker.
 
+### RQ4 ablation arms
+
+`--arm <name>` (requires `--engine kersor`) selects the exact `/kersor:optimize`
+condition for an ablation run. The arm→flag mapping is the single source of
+truth in `scripts/kersor-arms.sh`; the resolved flags are recorded in
+`status.json` (`arm`, `arm_flags`, `run_seed`, `max_dispatches`) and injected as
+an explicit instruction block into `combined_prompt.md`, so the worker appends
+them verbatim to its optimize command.
+
+```bash
+bash scripts/start-worker.sh FI-001 --engine kersor --gpu B200 \
+  --experiment-id E1-B200-FI26-FixedOrder --arm FixedOrder --run-seed 1
+```
+
+| Arm | State | `/kersor:optimize` flags |
+|-----|-------|--------------------------|
+| `KerSor-full` | live | *(none — full defaults)* |
+| `FixedOrder` | live | `--mode fixed-order` |
+| `no-handoff` | live | `--transfer-mode off` |
+| `no-WSR` | live | `--experience-mode off` |
+| `BestSingle` / `KDA-style-single` | live | `--workflows <wf> --max-workflows 1` (needs `--arm-workflow`) |
+| `StaticRule` | pending P2 | `--mode score-only` |
+| `LLMSelfSelection` | pending P2 | `--mode llm-raw-catalog` |
+| `no-trust-gate` | pending P2 | `--acceptance-gate report-only` |
+
+`live` arms launch today. `pending` arms need a KerSor mode still on the P2
+roadmap; the launcher **refuses** them (fail-closed) so a run can never silently
+record a condition KerSor does not yet enforce. `--max-dispatches N` maps to
+`--max-workflows N` (skipped when an arm already pins the budget); `--run-seed`
+is recorded for reproducibility.
+
 ### Monitor + Feishu
 
 The monitor surfaces paper metadata as Feishu columns — Experiment, Engine,

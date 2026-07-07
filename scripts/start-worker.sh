@@ -24,6 +24,14 @@ PROTOCOL="${KDA_PROTOCOL:-}"
 GPU="${KDA_GPU:-}"
 PAPER_INCLUDE_FLAG="${KDA_PAPER_INCLUDE_FLAG:-}"
 PAPER_CAVEAT="${KDA_PAPER_CAVEAT:-}"
+# RQ4 ablation arm (E3). Selects the /kersor:optimize flag set from kersor-arms.sh
+# so each launch records — and enforces — its experimental condition.
+ARM="${KDA_ARM:-}"
+ARM_WORKFLOW="${KDA_ARM_WORKFLOW:-}"      # single workflow for BestSingle / KDA-style-single
+RUN_SEED="${KDA_RUN_SEED:-}"              # E3 reproducibility seed (recorded)
+MAX_DISPATCHES="${KDA_MAX_DISPATCHES:-}"  # E3 dispatch budget -> --max-workflows
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/kersor-arms.sh"
 
 shell_quote() {
     printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
@@ -46,6 +54,14 @@ while [ $# -gt 0 ]; do
             PAPER_INCLUDE_FLAG="$2"; shift 2 ;;
         --paper-caveat)
             PAPER_CAVEAT="$2"; shift 2 ;;
+        --arm)
+            ARM="$2"; shift 2 ;;
+        --arm-workflow)
+            ARM_WORKFLOW="$2"; shift 2 ;;
+        --run-seed)
+            RUN_SEED="$2"; shift 2 ;;
+        --max-dispatches)
+            MAX_DISPATCHES="$2"; shift 2 ;;
         --dry-run)
             DRY_RUN=1; shift ;;
         --help|-h)
@@ -57,8 +73,13 @@ while [ $# -gt 0 ]; do
             echo "  --gpu <B200|H800|...>                       recorded in status.json"
             echo "  --paper-include-flag <headline|interim|ablation|exclude>"
             echo "  --paper-caveat <text>"
+            echo "  --arm <name>                                RQ4 ablation arm (see below); requires --engine kersor"
+            echo "  --arm-workflow <name>                       single workflow for BestSingle / KDA-style-single"
+            echo "  --run-seed <int>                            E3 reproducibility seed (recorded in status.json)"
+            echo "  --max-dispatches <int>                      E3 dispatch budget -> /kersor:optimize --max-workflows"
             echo "  --dry-run                                   write status.json + combined_prompt.md, do not launch"
-            echo "Example: $0 FI-002 --engine kersor --experiment-id E1-B200-FI26-KerSor-full --gpu B200"
+            echo "Arms: $(kersor_arm_list | tr '\n' ' ')"
+            echo "Example: $0 FI-002 --engine kersor --experiment-id E1-B200-FI26-KerSor-full --gpu B200 --arm KerSor-full"
             exit 0 ;;
         --*)
             echo "Unknown option: $1" >&2; exit 1 ;;
@@ -87,6 +108,49 @@ if [ -z "$PROTOCOL" ]; then
         kersor) PROTOCOL="KerSor" ;;
         humanize) PROTOCOL="humanize-RLCR" ;;
         kda3phase) PROTOCOL="KDA-3Phase" ;;
+    esac
+fi
+
+# --- Resolve the RQ4 ablation arm into /kersor:optimize flags -------------------
+# ARM_FLAGS is the extra flag string injected into the worker's optimize command;
+# empty for KerSor-full or when no --arm is given. Validation is fail-closed: an
+# unknown arm, a pending (not-yet-implemented) arm, a workflow-requiring arm
+# without --arm-workflow, or an arm on a non-kersor engine all abort BEFORE any
+# workspace mutation — a mislabeled run can never silently record the wrong
+# experimental condition.
+ARM_FLAGS=""
+ARM_STATE=""
+if [ -n "$ARM" ]; then
+    if [ "$ENGINE" != "kersor" ]; then
+        echo "ERROR: --arm '$ARM' requires --engine kersor (got: $ENGINE)" >&2; exit 1
+    fi
+    ARM_STATE="$(kersor_arm_state "$ARM")"
+    if [ -z "$ARM_STATE" ]; then
+        echo "ERROR: unknown --arm '$ARM'. Known arms: $(kersor_arm_list | tr '\n' ' ')" >&2; exit 1
+    fi
+    if [ "$ARM_STATE" = "pending" ]; then
+        echo "ERROR: --arm '$ARM' needs a KerSor mode not yet merged (P2: score-only / llm-raw-catalog / acceptance report-only)." >&2
+        echo "       Refusing to launch so the run cannot record a condition KerSor does not yet enforce." >&2
+        exit 1
+    fi
+    if kersor_arm_needs_workflow "$ARM" && [ -z "$ARM_WORKFLOW" ]; then
+        echo "ERROR: --arm '$ARM' requires --arm-workflow <name> (the single workflow to pin)." >&2; exit 1
+    fi
+    ARM_FLAGS="$(kersor_arm_flags "$ARM" "$ARM_WORKFLOW")"
+fi
+# E3 dispatch budget maps to --max-workflows unless the arm already pinned it.
+if [ -n "$MAX_DISPATCHES" ]; then
+    case "$MAX_DISPATCHES" in
+        ''|*[!0-9]*) echo "ERROR: --max-dispatches must be a positive integer (got: $MAX_DISPATCHES)" >&2; exit 1 ;;
+    esac
+    case "$ARM_FLAGS" in
+        *--max-workflows*) : ;;   # arm (BestSingle) already fixed the budget
+        *) ARM_FLAGS="${ARM_FLAGS:+$ARM_FLAGS }--max-workflows $MAX_DISPATCHES" ;;
+    esac
+fi
+if [ -n "$RUN_SEED" ]; then
+    case "$RUN_SEED" in
+        ''|*[!0-9]*) echo "ERROR: --run-seed must be a non-negative integer (got: $RUN_SEED)" >&2; exit 1 ;;
     esac
 fi
 
@@ -150,7 +214,7 @@ cat "$PHASE1_PROMPT" >> "$COMBINED_PROMPT"
 # Inject paper-experiment metadata so the worker knows its arm and preserves it
 # in status.json. Appended only for actual paper runs (protocol alone, which is
 # always derived from --engine, does not trigger it).
-if [ -n "$EXPERIMENT_ID" ] || [ -n "$GPU" ] || [ -n "$PAPER_INCLUDE_FLAG" ] || [ -n "$PAPER_CAVEAT" ]; then
+if [ -n "$EXPERIMENT_ID" ] || [ -n "$GPU" ] || [ -n "$PAPER_INCLUDE_FLAG" ] || [ -n "$PAPER_CAVEAT" ] || [ -n "$ARM" ]; then
     {
         echo ""
         echo "---"
@@ -162,9 +226,30 @@ if [ -n "$EXPERIMENT_ID" ] || [ -n "$GPU" ] || [ -n "$PAPER_INCLUDE_FLAG" ] || [
         echo "- gpu: ${GPU}"
         echo "- paper_include_flag: ${PAPER_INCLUDE_FLAG}"
         echo "- paper_caveat: ${PAPER_CAVEAT}"
+        echo "- arm: ${ARM}"
+        echo "- arm_flags: ${ARM_FLAGS}"
+        echo "- run_seed: ${RUN_SEED}"
+        echo "- max_dispatches: ${MAX_DISPATCHES}"
         echo ""
         echo "When you write or update status.json, INCLUDE and PRESERVE these fields"
-        echo "(experiment_id, protocol, gpu, paper_include_flag, paper_caveat). Do not drop them."
+        echo "(experiment_id, protocol, gpu, paper_include_flag, paper_caveat, arm,"
+        echo "arm_flags, run_seed, max_dispatches). Do not drop them."
+        if [ -n "$ARM_FLAGS" ]; then
+            echo ""
+            echo "### Ablation arm: ${ARM}"
+            echo ""
+            echo "This is an ablation run. You MUST append these flags to your"
+            echo "\`/kersor:optimize\` command exactly as written:"
+            echo ""
+            echo "    ${ARM_FLAGS}"
+            echo ""
+            echo "So the optimize step becomes (keep --spec and --yolo):"
+            echo ""
+            echo "    /kersor:optimize --spec kersor-spec.md --yolo ${ARM_FLAGS}"
+            echo ""
+            echo "Do not add, drop, or reorder ablation flags — the arm's validity"
+            echo "depends on this exact condition."
+        fi
     } >> "$COMBINED_PROMPT"
 fi
 
@@ -173,13 +258,15 @@ fi
 # --paper-caveat containing quotes or backslashes) cannot produce invalid JSON,
 # which would break the worker's read-modify-write status tracking.
 python3 - "$WORKSPACE/status.json" "$ENGINE" "$PROTOCOL" "$EXPERIMENT_ID" "$GPU" \
-              "$PAPER_INCLUDE_FLAG" "$PAPER_CAVEAT" "$TASK_ID" <<'PY'
+              "$PAPER_INCLUDE_FLAG" "$PAPER_CAVEAT" "$TASK_ID" \
+              "$ARM" "$ARM_FLAGS" "$RUN_SEED" "$MAX_DISPATCHES" <<'PY'
 import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-path, engine, protocol, experiment_id, gpu, flag, caveat, task_id = sys.argv[1:9]
+(path, engine, protocol, experiment_id, gpu, flag, caveat, task_id,
+ arm, arm_flags, run_seed, max_dispatches) = sys.argv[1:13]
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 Path(path).write_text(
     json.dumps(
@@ -192,6 +279,10 @@ Path(path).write_text(
             "paper_include_flag": flag,
             "paper_caveat": caveat,
             "task_id": task_id,
+            "arm": arm,
+            "arm_flags": arm_flags,
+            "run_seed": int(run_seed) if run_seed.isdigit() else None,
+            "max_dispatches": int(max_dispatches) if max_dispatches.isdigit() else None,
             "started_at": now,
             "best_candidate": None,
             "speedup": None,

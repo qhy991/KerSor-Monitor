@@ -25,6 +25,7 @@ class StartWorkerDryRunTests(unittest.TestCase):
         (root / "scripts").mkdir()
         (root / "templates").mkdir()
         shutil.copy(SCRIPTS / "start-worker.sh", root / "scripts" / "start-worker.sh")
+        shutil.copy(SCRIPTS / "kersor-arms.sh", root / "scripts" / "kersor-arms.sh")
         shutil.copy(TEMPLATES / "worker-prompt-kersor.md", root / "templates" / "worker-prompt-kersor.md")
         ws = root / "workspaces" / "fi_001_smoke"
         (ws / "docs").mkdir(parents=True)
@@ -38,6 +39,15 @@ class StartWorkerDryRunTests(unittest.TestCase):
             capture_output=True, text=True,
         )
         self.assertEqual(proc.returncode, 0, f"start-worker failed:\nstderr:{proc.stderr}\nstdout:{proc.stdout}")
+        return proc
+
+    def _run_expect_fail(self, root: Path, *extra: str) -> subprocess.CompletedProcess:
+        proc = subprocess.run(
+            ["bash", str(root / "scripts" / "start-worker.sh"), "FI-001",
+             "--engine", "kersor", "--dry-run", "--session", "smoke", *extra],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(proc.returncode, 0, f"expected failure but succeeded:\n{proc.stdout}")
         return proc
 
     def _status(self, root: Path) -> dict:
@@ -75,6 +85,96 @@ class StartWorkerDryRunTests(unittest.TestCase):
         status = self._status(root)
         self.assertEqual(status["experiment_id"], "")
         self.assertEqual(status["protocol"], "KerSor")  # protocol is always derived
+
+
+    def _combined(self, root: Path) -> str:
+        return (root / "workspaces" / "fi_001_smoke" / "runs" / "combined_prompt.md").read_text()
+
+
+class ArmTests(StartWorkerDryRunTests):
+    def test_kersor_full_arm_records_empty_flags(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "KerSor-full")
+        status = self._status(root)
+        self.assertEqual(status["arm"], "KerSor-full")
+        self.assertEqual(status["arm_flags"], "")
+        # KerSor-full injects no extra flags, so no ablation-flag instruction block
+        self.assertNotIn("### Ablation arm:", self._combined(root))
+
+    def test_fixed_order_arm_maps_to_mode_flag(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "FixedOrder")
+        self.assertEqual(self._status(root)["arm_flags"], "--mode fixed-order")
+        combined = self._combined(root)
+        self.assertIn("### Ablation arm: FixedOrder", combined)
+        self.assertIn("/kersor:optimize --spec kersor-spec.md --yolo --mode fixed-order", combined)
+
+    def test_no_handoff_and_no_wsr_map_to_existing_flags(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "no-handoff")
+        self.assertEqual(self._status(root)["arm_flags"], "--transfer-mode off")
+        root2 = self._make_infra()
+        self._run(root2, "--arm", "no-WSR")
+        self.assertEqual(self._status(root2)["arm_flags"], "--experience-mode off")
+
+    def test_bestsingle_requires_workflow(self) -> None:
+        root = self._make_infra()
+        proc = self._run_expect_fail(root, "--arm", "BestSingle")
+        self.assertIn("--arm-workflow", proc.stderr)
+
+    def test_bestsingle_with_workflow_pins_single(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "BestSingle", "--arm-workflow", "ako4x-kernel-optimizer")
+        self.assertEqual(self._status(root)["arm_flags"],
+                         "--workflows ako4x-kernel-optimizer --max-workflows 1")
+
+    def test_pending_arm_refuses_to_launch(self) -> None:
+        for arm in ("StaticRule", "LLMSelfSelection", "no-trust-gate"):
+            root = self._make_infra()
+            proc = self._run_expect_fail(root, "--arm", arm)
+            self.assertIn("not yet merged", proc.stderr, arm)
+
+    def test_unknown_arm_rejected(self) -> None:
+        root = self._make_infra()
+        proc = self._run_expect_fail(root, "--arm", "TotallyMadeUp")
+        self.assertIn("unknown --arm", proc.stderr)
+
+    def test_arm_on_non_kersor_engine_rejected(self) -> None:
+        root = self._make_infra()
+        # override engine to kda3phase; template must exist for that engine
+        shutil.copy(TEMPLATES / "worker-prompt-kersor.md",
+                    root / "templates" / "worker-prompt-kda3phase.md")
+        proc = subprocess.run(
+            ["bash", str(root / "scripts" / "start-worker.sh"), "FI-001",
+             "--engine", "kda3phase", "--dry-run", "--session", "smoke",
+             "--arm", "KerSor-full"],
+            capture_output=True, text=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("requires --engine kersor", proc.stderr)
+
+    def test_max_dispatches_maps_to_max_workflows(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "KerSor-full", "--max-dispatches", "3")
+        self.assertEqual(self._status(root)["arm_flags"], "--max-workflows 3")
+        self.assertEqual(self._status(root)["max_dispatches"], 3)
+
+    def test_max_dispatches_not_double_applied_for_bestsingle(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "BestSingle", "--arm-workflow", "ako4x",
+                  "--max-dispatches", "5")
+        # BestSingle already fixed --max-workflows 1; do not append a second one
+        self.assertEqual(self._status(root)["arm_flags"],
+                         "--workflows ako4x --max-workflows 1")
+
+    def test_run_seed_recorded(self) -> None:
+        root = self._make_infra()
+        self._run(root, "--arm", "KerSor-full", "--run-seed", "42")
+        self.assertEqual(self._status(root)["run_seed"], 42)
+
+    def test_bad_run_seed_rejected(self) -> None:
+        root = self._make_infra()
+        proc = self._run_expect_fail(root, "--arm", "KerSor-full", "--run-seed", "abc")
+        self.assertIn("--run-seed", proc.stderr)
 
 
 if __name__ == "__main__":
