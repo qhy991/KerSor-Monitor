@@ -30,7 +30,7 @@ kersor_arm_flags() {
         no-WSR)             printf -- '--experience-mode off' ;;          # no experience bank / no S_measured
         BestSingle|KDA-style-single)
                             printf -- '--workflows %s --max-workflows 1' "$wf" ;;
-        # --- pending P2 (KerSor mode not yet available) ---
+        # --- RQ4 modes landed in KerSor P2 ---
         StaticRule)         printf -- '--mode score-only' ;;             # deterministic score, no model
         LLMSelfSelection)   printf -- '--mode llm-raw-catalog' ;;        # model picks from unfiltered catalog
         no-trust-gate)      printf -- '--acceptance-gate report-only' ;; # measure+record, do not veto
@@ -38,12 +38,11 @@ kersor_arm_flags() {
     esac
 }
 
-# "live" | "pending" | "" (unknown). pending arms map to flags that reference a
-# KerSor mode still on the P2 roadmap; keep this list in sync with the P2 modes.
+# "live" | "pending" | "" (unknown). All arms are live once their KerSor mode
+# exists; the pending state is retained for arms whose mode is not yet merged.
 kersor_arm_state() {
     case "$1" in
-        KerSor-full|FixedOrder|no-handoff|no-WSR|BestSingle|KDA-style-single) printf 'live' ;;
-        StaticRule|LLMSelfSelection|no-trust-gate) printf 'pending' ;;
+        KerSor-full|FixedOrder|no-handoff|no-WSR|BestSingle|KDA-style-single|StaticRule|LLMSelfSelection|no-trust-gate) printf 'live' ;;
         *) printf '' ;;
     esac
 }

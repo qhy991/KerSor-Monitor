@@ -291,15 +291,15 @@ bash scripts/start-worker.sh FI-001 --engine kersor --gpu B200 \
 | `no-handoff` | live | `--transfer-mode off` |
 | `no-WSR` | live | `--experience-mode off` |
 | `BestSingle` / `KDA-style-single` | live | `--workflows <wf> --max-workflows 1` (needs `--arm-workflow`) |
-| `StaticRule` | pending P2 | `--mode score-only` |
-| `LLMSelfSelection` | pending P2 | `--mode llm-raw-catalog` |
-| `no-trust-gate` | pending P2 | `--acceptance-gate report-only` |
+| `StaticRule` | live | `--mode score-only` |
+| `LLMSelfSelection` | live | `--mode llm-raw-catalog` |
+| `no-trust-gate` | live | `--acceptance-gate report-only` |
 
-`live` arms launch today. `pending` arms need a KerSor mode still on the P2
-roadmap; the launcher **refuses** them (fail-closed) so a run can never silently
-record a condition KerSor does not yet enforce. `--max-dispatches N` maps to
+All arms launch (the KerSor modes landed in P2). `--max-dispatches N` maps to
 `--max-workflows N` (skipped when an arm already pins the budget); `--run-seed`
-is recorded for reproducibility.
+is recorded for reproducibility. The launcher still fail-closes on an unknown
+arm, a workflow-requiring arm without `--arm-workflow`, or `--arm` on a
+non-kersor engine.
 
 ### Monitor + Feishu
 

@@ -128,11 +128,17 @@ class ArmTests(StartWorkerDryRunTests):
         self.assertEqual(self._status(root)["arm_flags"],
                          "--workflows ako4x-kernel-optimizer --max-workflows 1")
 
-    def test_pending_arm_refuses_to_launch(self) -> None:
-        for arm in ("StaticRule", "LLMSelfSelection", "no-trust-gate"):
+    def test_p2_arms_now_live_and_map_to_kersor_modes(self) -> None:
+        # These three landed with KerSor P2; they must launch and map correctly.
+        expected = {
+            "StaticRule": "--mode score-only",
+            "LLMSelfSelection": "--mode llm-raw-catalog",
+            "no-trust-gate": "--acceptance-gate report-only",
+        }
+        for arm, flags in expected.items():
             root = self._make_infra()
-            proc = self._run_expect_fail(root, "--arm", arm)
-            self.assertIn("not yet merged", proc.stderr, arm)
+            self._run(root, "--arm", arm)
+            self.assertEqual(self._status(root)["arm_flags"], flags, arm)
 
     def test_unknown_arm_rejected(self) -> None:
         root = self._make_infra()
