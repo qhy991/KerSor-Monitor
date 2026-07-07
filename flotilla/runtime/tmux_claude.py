@@ -8,12 +8,26 @@ from ..config import SETTINGS
 def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def _ssh(host: str, cmd: str, input: str | None = None, timeout: float = 20.0) -> subprocess.CompletedProcess:
-    """Run cmd on host via ssh (BatchMode, no prompts). Returns CompletedProcess."""
-    return subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, cmd],
-        input=input, capture_output=True, text=True, timeout=timeout, check=False,
-    )
+def _ssh(host: str, cmd: str, input: str | None = None, timeout: float = 20.0,
+         retries: int = 3) -> subprocess.CompletedProcess:
+    """Run cmd on host via ssh (BatchMode, -x to suppress X11, retry on connection drops)."""
+    last = None
+    for attempt in range(retries):
+        try:
+            r = subprocess.run(
+                ["ssh", "-x", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, cmd],
+                input=input, capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            r = subprocess.CompletedProcess(args=cmd, returncode=255, stdout="", stderr="timeout")
+        if r.returncode == 0:
+            return r
+        last = r
+        if r.returncode == 255 and attempt < retries - 1:
+            time.sleep(0.5 * (attempt + 1))
+            continue
+        break
+    return last or r  # type: ignore[possibly-undefined]
 
 def _encode_cwd(cwd: str) -> str:
     """claude stores sessions under ~/.claude/projects/<cwd with '/' -> '-'>."""
@@ -69,6 +83,13 @@ class ClaudeCodeTmuxRuntime:
             subprocess.run(["tmux", "new-window", "-t", sess, "-n", win, f"bash {workspace}/runs/start.sh"], check=True)
             pane = subprocess.run(["tmux", "list-panes", "-t", f"{sess}:{win}", "-F", "#{pane_id}"],
                                   capture_output=True, text=True, check=True).stdout.strip().splitlines()[0]
+
+        # Auto-confirm Claude Code's "trust this folder" prompt (first run in a new workspace).
+        time.sleep(3)
+        if host:
+            _ssh(host, f"tmux send-keys -t {pane} Enter")
+        elif pane:
+            subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=False, capture_output=True)
 
         handle = {"host": host, "session": sess, "window": win, "pane": pane,
                   "session_uuid": None, "cwd": workspace}
