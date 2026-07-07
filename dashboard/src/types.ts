@@ -8,6 +8,10 @@ export interface Task {
   runtime: string;
   target_host?: string | null;
   session_uuid?: string | null;
+  last_activity?: string;
+  last_tool?: string | null;
+  tokens?: number;
+  pane_tail?: string;
 }
 
 export interface Host {

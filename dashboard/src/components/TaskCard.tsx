@@ -28,6 +28,13 @@ export function TaskCard({ t }: { t: Task }) {
       {t.session_uuid && (
         <div className="card-session" title={t.session_uuid}>
           session {t.session_uuid.slice(0, 8)}
+          {typeof t.tokens === 'number' && t.tokens > 0 ? ` · ${t.tokens} tok` : ''}
+        </div>
+      )}
+      {t.last_activity && (
+        <div className="card-activity" title={t.last_activity}>
+          {t.last_tool ? `${t.last_tool}: ` : ''}
+          {t.last_activity}
         </div>
       )}
       {(t.state === 'STUCK' || t.state === 'RUNNING' || t.state === 'PAUSED') && (

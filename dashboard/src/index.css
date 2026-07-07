@@ -92,6 +92,11 @@ body { background: var(--bg); color: var(--text); }
 .card-session {
   font-size: 11px; color: var(--text-dim); font-family: ui-monospace, "SF Mono", Menlo, monospace;
 }
+.card-activity {
+  font-size: 12px; color: var(--text); background: var(--surface-2, #f0f2f5);
+  border-radius: 6px; padding: 6px 8px; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .nudge { display: flex; gap: 8px; margin-top: 4px; }
 .nudge input { flex: 1; min-width: 0; }
 .btn {
