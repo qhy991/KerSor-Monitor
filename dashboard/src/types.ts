@@ -21,3 +21,13 @@ export interface Host {
   gpu?: string | null;
   notes?: string;
 }
+
+export interface Summary {
+  total: number;
+  running: number;
+  done: number;
+  stuck: number;
+  queued: number;
+  failed: number;
+  paused: number;
+}

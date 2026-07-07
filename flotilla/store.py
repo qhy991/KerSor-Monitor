@@ -57,6 +57,14 @@ class Store:
         with self._conn() as c:
             rows = c.execute("SELECT id FROM task WHERE state='QUEUED' ORDER BY id").fetchall()
         return [self.get_task(r["id"]) for r in rows]
+    def all_tasks(self) -> list[models.Task]:
+        with self._conn() as c:
+            rows = c.execute("SELECT id FROM task ORDER BY id").fetchall()
+        return [self.get_task(r["id"]) for r in rows]
+    def task_counts(self) -> dict:
+        with self._conn() as c:
+            rows = c.execute("SELECT state, COUNT(*) as cnt FROM task GROUP BY state").fetchall()
+        return {r["state"]: r["cnt"] for r in rows}
     def active_workers(self) -> int:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM worker WHERE ended_at IS NULL").fetchone()[0]

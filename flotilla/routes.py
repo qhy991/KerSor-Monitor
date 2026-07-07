@@ -39,6 +39,18 @@ def list_tasks(pid: str):
 def list_hosts():
     return _store().list_hosts()
 
+@router.get("/summary")
+def summary():
+    counts = _store().task_counts()
+    total = sum(counts.values())
+    return {"total": total,
+            "running": counts.get("RUNNING", 0),
+            "done": counts.get("DONE", 0),
+            "stuck": counts.get("STUCK", 0),
+            "queued": counts.get("QUEUED", 0),
+            "failed": counts.get("FAILED", 0),
+            "paused": counts.get("PAUSED", 0)}
+
 @router.post("/hosts", status_code=201)
 def create_host(h: models.Host):
     s = _store()

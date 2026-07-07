@@ -1,4 +1,4 @@
-import type { Task, Host } from './types';
+import type { Task, Host, Summary } from './types';
 const base = '';
 
 export async function listTasks(pid: string): Promise<Task[]> {
@@ -76,6 +76,10 @@ export function subscribe(tid: string, onEvt: (t: Task) => void): EventSource {
 }
 
 // --- hosts (accessible hardware) ---
+export async function getSummary(): Promise<Summary> {
+  const r = await fetch(`${base}/summary`);
+  return r.json();
+}
 export async function getHosts(): Promise<Host[]> {
   const r = await fetch(`${base}/hosts`);
   return r.json();
