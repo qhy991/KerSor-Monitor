@@ -12,6 +12,7 @@ export interface Task {
   last_tool?: string | null;
   tokens?: number;
   pane_tail?: string;
+  metadata?: { effort?: string; [key: string]: unknown };
 }
 
 export interface Host {

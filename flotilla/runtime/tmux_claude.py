@@ -30,8 +30,8 @@ def _ssh(host: str, cmd: str, input: str | None = None, timeout: float = 20.0,
     return last or r  # type: ignore[possibly-undefined]
 
 def _encode_cwd(cwd: str) -> str:
-    """claude stores sessions under ~/.claude/projects/<cwd with '/' -> '-'>."""
-    return cwd.replace("/", "-")
+    """claude stores sessions under ~/.claude/projects/<cwd with '/' and '_' -> '-'>."""
+    return cwd.replace("/", "-").replace("_", "-")
 
 class ClaudeCodeTmuxRuntime:
     """claude in a tmux window — locally, or on a remote host via ssh when `host` is set."""
@@ -52,7 +52,9 @@ class ClaudeCodeTmuxRuntime:
         sess = session or SETTINGS.tmux_session
         win = f"flotilla_{task_id}"[:40]
         model = worker_model or SETTINGS.worker_model
-        cmd = boot_command or f"claude --model {model} --permission-mode auto 'Read runs/combined_prompt.md and begin.'"
+        effort = meta.get("effort")
+        effort_flag = f" --effort {effort}" if effort else ""
+        cmd = boot_command or f"claude --model {model}{effort_flag} --permission-mode auto 'Read runs/combined_prompt.md and begin.'"
         # A start script avoids nested shell-quoting across ssh (the claude cmd has its own quotes).
         start_sh = (
             "#!/bin/bash\n"

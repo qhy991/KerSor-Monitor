@@ -23,6 +23,7 @@ export async function createTasks(
     runtime: string;
     evaluator?: string | null;
     target_host?: string | null;
+    metadata?: { effort?: string; [key: string]: unknown };
   }[],
 ): Promise<{ created: number }> {
   const r = await fetch(`${base}/projects/${pid}/tasks`, {
@@ -47,6 +48,7 @@ export async function ensureProjectAndCreateTasks(
     runtime: string;
     evaluator?: string | null;
     target_host?: string | null;
+    metadata?: { effort?: string; [key: string]: unknown };
   }[],
 ): Promise<{ created: number }> {
   try {

@@ -17,6 +17,7 @@ export function NewTaskForm({
   const [runtime, setRuntime] = useState('shell');
   const [evaluator, setEvaluator] = useState('pytest');
   const [host, setHost] = useState('local');
+  const [effort, setEffort] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -26,6 +27,8 @@ export function NewTaskForm({
     setBusy(true);
     setErr(null);
     const id = `t-${Math.random().toString(36).slice(2, 8)}`;
+    const metadata: { effort?: string } = {};
+    if (effort) metadata.effort = effort;
     try {
       await ensureProjectAndCreateTasks(pid, [
         {
@@ -35,6 +38,7 @@ export function NewTaskForm({
           runtime,
           evaluator: evaluator || null,
           target_host: host === 'local' ? null : host,
+          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
         },
       ]);
       onSubmitted();
@@ -53,6 +57,17 @@ export function NewTaskForm({
           <select className="select" value={runtime} onChange={(e) => setRuntime(e.target.value)}>
             <option value="shell">shell (lifecycle demo)</option>
             <option value="claude_tmux">claude_tmux (real agent)</option>
+          </select>
+        </label>
+        <label className="field">
+          effort
+          <select className="select" value={effort} onChange={(e) => setEffort(e.target.value)}>
+            <option value="">default</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
           </select>
         </label>
         <label className="field">
@@ -85,7 +100,7 @@ export function NewTaskForm({
       <div className="newtask-row newtask-foot">
         <span className="hint">
           submits to project <b>{pid || '—'}</b> on <b>{host}</b>
-          {runtime === 'claude_tmux' ? '' : ' · shell runs `true` (no real work)'}
+          {effort ? ` · effort=${effort}` : ''}
         </span>
         <button className="btn" disabled={busy || !spec.trim() || !pid.trim()}>
           {busy ? 'Submitting…' : '＋ Submit task'}
