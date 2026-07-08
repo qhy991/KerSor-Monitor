@@ -73,6 +73,7 @@ class ClaudeCodeTmuxRuntime:
         # A start script avoids nested shell-quoting across ssh.
         start_sh = (
             "#!/bin/bash\n"
+            'export PATH="$HOME/.local/bin:$PATH"\n'
             f'cd "{workspace}"\n{heartbeat_setup}{cmd}; \n'
             f'{heartbeat_cleanup}echo "=== Worker exited at $(date) ==="; exec bash\n'
         )
@@ -102,12 +103,24 @@ class ClaudeCodeTmuxRuntime:
             pane = subprocess.run(["tmux", "list-panes", "-t", f"{sess}:{win}", "-F", "#{pane_id}"],
                                   capture_output=True, text=True, check=True).stdout.strip().splitlines()[0]
 
-        # Auto-confirm Claude Code's "trust this folder" prompt (first run in a new workspace).
+        # Auto-confirm Claude Code's first-run prompts (trust folder + API key).
+        # Checks pane content before sending, so non-prompted runs aren't affected.
         time.sleep(3)
-        if host:
-            _ssh(host, f"tmux send-keys -t {pane} Enter")
-        elif pane:
-            subprocess.run(["tmux", "send-keys", "-t", pane, "Enter"], check=False, capture_output=True)
+        for _label, _check, _keys in [("trust", "trust", ["Enter"]), ("apikey", "api key", ["1", "Enter"])]:
+            if host:
+                cap = _ssh(host, f"tmux capture-pane -p -t {pane} -S -10").stdout
+            else:
+                cap = subprocess.run(["tmux", "capture-pane", "-p", "-t", pane, "-S", "-10"],
+                                     capture_output=True, text=True, check=False).stdout
+            if _check.lower() in cap.lower():
+                time.sleep(0.5)
+                for k in _keys:
+                    if host:
+                        _ssh(host, f"tmux send-keys -t {pane} {repr(k)}")
+                    else:
+                        subprocess.run(["tmux", "send-keys", "-t", pane, k], check=False, capture_output=True)
+                    time.sleep(0.3)
+            time.sleep(2)
 
         handle = {"host": host, "session": sess, "window": win, "pane": pane,
                   "session_uuid": None, "cwd": workspace}
