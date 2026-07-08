@@ -55,10 +55,26 @@ class ClaudeCodeTmuxRuntime:
         effort = meta.get("effort")
         effort_flag = f" --effort {effort}" if effort else ""
         cmd = boot_command or f"claude --model {model}{effort_flag} --permission-mode auto 'Read runs/combined_prompt.md and begin.'"
-        # A start script avoids nested shell-quoting across ssh (the claude cmd has its own quotes).
+        # Worker-push heartbeat: if FLOTILLA_API_URL is set, the worker pushes its
+        # status.json to the api every 60s (event-driven, no SSH polling needed).
+        api_url = SETTINGS.api_base_url
+        if api_url:
+            heartbeat_setup = (
+                f'API_URL="{api_url}"\n'
+                f'( while true; do sleep 60; '
+                f'[ -f status.json ] && curl -sf -X POST "$API_URL/internal/worker-ping" '
+                f'-H "Content-Type: application/json" -d "$(cat status.json)" 2>/dev/null || true; done ) &\n'
+                f'HB=$!\n'
+            )
+            heartbeat_cleanup = '[ -n "${HB:-}" ] && kill $HB 2>/dev/null\n'
+        else:
+            heartbeat_setup = ""
+            heartbeat_cleanup = ""
+        # A start script avoids nested shell-quoting across ssh.
         start_sh = (
             "#!/bin/bash\n"
-            f'cd "{workspace}" && {cmd}; echo "=== Worker exited at $(date) ==="; exec bash\n'
+            f'cd "{workspace}"\n{heartbeat_setup}{cmd}; \n'
+            f'{heartbeat_cleanup}echo "=== Worker exited at $(date) ==="; exec bash\n'
         )
 
         if host:

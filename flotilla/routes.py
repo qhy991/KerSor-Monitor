@@ -51,6 +51,35 @@ def summary():
             "failed": counts.get("FAILED", 0),
             "paused": counts.get("PAUSED", 0)}
 
+@router.post("/internal/worker-ping")
+def worker_ping(body: dict):
+    """Worker pushes its status.json here (heartbeat). Event-driven: the agent
+    decides when to report, instead of the api SSH-polling every few seconds."""
+    task_id = body.get("task_id")
+    if not task_id:
+        return {"ok": False, "reason": "no task_id"}
+    s = _store()
+    t = s.get_task(task_id)
+    if t is None:
+        return {"ok": False, "reason": "task not found"}
+    state = body.get("state", "running")
+    rec = {"status_state": state, "speedup": body.get("speedup"),
+           "rounds": body.get("rounds", 0), "timestamp": body.get("timestamp", ""),
+           "source": "worker-ping"}
+    s.append_event(models.Event(task_id=task_id, type="status", payload=rec))
+    # fan out to dashboard
+    from . import sinks
+    pid = t.project_id
+    tasks = [{"id": t2.id, "name": t2.name, "state": t2.state, **rec}
+             for t2 in s.list_tasks(pid)]
+    sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
+    # terminal check (worker reports promoted/stuck/abandoned)
+    from .observer import _map_terminal
+    terminal = _map_terminal(state, False)
+    if terminal and t.state == "RUNNING":
+        s.set_task_state(task_id, terminal)
+    return {"ok": True}
+
 @router.post("/hosts", status_code=201)
 def create_host(h: models.Host):
     s = _store()

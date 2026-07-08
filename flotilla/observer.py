@@ -152,8 +152,12 @@ def observe_running(store: Store) -> int:
     return still_running
 
 
-def loop(store: Store, interval: float = 3.0):
-    """Background daemon thread: re-observe RUNNING workers every `interval` seconds."""
+def loop(store: Store, interval: float | None = None):
+    """Background daemon thread: re-observe RUNNING workers every `interval` seconds.
+    Defaults to config.SETTINGS.observer_interval (env FLOTILLA_OBSERVER_INTERVAL)."""
+    if interval is None:
+        from . import config
+        interval = config.SETTINGS.observer_interval
     def _run():
         while True:
             try:
