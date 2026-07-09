@@ -72,7 +72,7 @@ def worker_ping(body: dict):
     pid = t.project_id
     tasks = [{"id": t2.id, "name": t2.name, "state": t2.state,
               "workspace_path": t2.workspace_path, "target_host": t2.target_host,
-              "rounds": t2.rounds or rec.get("rounds", 0),
+              "rounds": rec.get("rounds", 0),
               "candidates": rec.get("candidates", 0),
               "speedup": rec.get("speedup"), "timestamp": rec.get("timestamp"),
               "session_uuid": rec.get("session_uuid"),
