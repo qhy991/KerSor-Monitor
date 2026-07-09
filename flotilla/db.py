@@ -4,7 +4,7 @@ from pathlib import Path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS project(
-  id TEXT PRIMARY KEY, name TEXT, config TEXT, created_at TEXT);
+  id TEXT PRIMARY KEY, name TEXT, config TEXT, feishu_base TEXT, feishu_table TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS task(
   id TEXT PRIMARY KEY, project_id TEXT, name TEXT, spec TEXT, state TEXT,
   workspace_path TEXT, runtime TEXT, target_host TEXT, resource_req TEXT, evaluator TEXT,
@@ -36,5 +36,14 @@ def connect(path: str) -> sqlite3.Connection:
 def init(path: str) -> None:
     conn = connect(path)
     conn.executescript(_SCHEMA)
+    # Migration: add feishu columns to existing project table.
+    try:
+        conn.execute("ALTER TABLE project ADD COLUMN feishu_base TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE project ADD COLUMN feishu_table TEXT")
+    except Exception:
+        pass
     conn.commit()
     conn.close()

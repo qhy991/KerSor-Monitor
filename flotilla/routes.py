@@ -67,15 +67,19 @@ def worker_ping(body: dict):
            "rounds": body.get("rounds", 0), "timestamp": body.get("timestamp", ""),
            "source": "worker-ping"}
     s.append_event(models.Event(task_id=task_id, type="status", payload=rec))
-    # fan out to dashboard
+    # fan out to dashboard + feishu (per-project feishu config if set)
     from . import sinks
     pid = t.project_id
+    proj = s.get_project(pid)
+    proj_feishu = {"feishu_base": proj.feishu_base if proj else None,
+                   "feishu_table": proj.feishu_table if proj else None}
     tasks = [{"id": t2.id, "name": t2.name, "state": t2.state,
               "workspace_path": t2.workspace_path, "target_host": t2.target_host,
               "rounds": rec.get("rounds", 0),
               "candidates": rec.get("candidates", 0),
               "speedup": rec.get("speedup"), "timestamp": rec.get("timestamp"),
               "session_uuid": rec.get("session_uuid"),
+              **proj_feishu,
               **rec}
              for t2 in s.list_tasks(pid)]
     sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))

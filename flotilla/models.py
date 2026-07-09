@@ -10,6 +10,8 @@ class Project(BaseModel):
     id: str
     name: str
     config: dict[str, Any] = Field(default_factory=dict)
+    feishu_base: str | None = None    # per-project Bitable base token (overrides env)
+    feishu_table: str | None = None   # per-project Bitable table id (overrides env)
     created_at: str = Field(default_factory=_now)
 
 class Task(BaseModel):

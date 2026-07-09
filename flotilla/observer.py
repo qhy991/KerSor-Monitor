@@ -76,10 +76,15 @@ def observe_and_record(store: Store, worker_id: str, handle: WorkerHandle) -> di
     rec["exited"] = exited
     store.append_event(models.Event(task_id=handle.task_id, type="status", payload=rec))
     from . import sinks
+    pid = _project_of(store, handle.task_id)
+    proj = store.get_project(pid)
+    proj_feishu = {"feishu_base": proj.feishu_base if proj else None,
+                   "feishu_table": proj.feishu_table if proj else None}
     tasks = [{"id": t.id, "name": t.name, "state": t.state,
               "workspace_path": t.workspace_path, "target_host": t.target_host,
+              **proj_feishu,
               **rec}
-             for t in store.list_tasks(_project_of(store, handle.task_id))]
+             for t in store.list_tasks(pid)]
     sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
     return rec
 

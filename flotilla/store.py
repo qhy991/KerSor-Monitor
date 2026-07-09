@@ -17,13 +17,15 @@ class Store:
     # --- projects ---
     def create_project(self, p: models.Project) -> None:
         with self._conn() as c:
-            c.execute("INSERT INTO project(id,name,config,created_at) VALUES(?,?,?,?)",
-                      (p.id, p.name, json.dumps(p.config), p.created_at))
+            c.execute("INSERT OR REPLACE INTO project(id,name,config,feishu_base,feishu_table,created_at) VALUES(?,?,?,?,?,?)",
+                      (p.id, p.name, json.dumps(p.config), p.feishu_base, p.feishu_table, p.created_at))
     def get_project(self, pid: str) -> models.Project | None:
         with self._conn() as c:
             r = c.execute("SELECT * FROM project WHERE id=?", (pid,)).fetchone()
+        if not r: return None
         return models.Project(id=r["id"], name=r["name"], config=json.loads(r["config"]),
-                              created_at=r["created_at"]) if r else None
+                              feishu_base=r["feishu_base"], feishu_table=r["feishu_table"],
+                              created_at=r["created_at"])
 
     # --- tasks ---
     def create_task(self, t: models.Task) -> None:

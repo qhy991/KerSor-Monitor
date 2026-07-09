@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json, os, subprocess
+from collections import defaultdict
 from .base import ProjectSnapshot
 
 # Flotilla state → Bitable Status option (only 6 valid options in the table).
@@ -11,27 +12,32 @@ _FEISHU_STATUS_MAP = {
 def _feishu_status(s: str) -> str:
     return _FEISHU_STATUS_MAP.get((s or "pending").lower(), "pending")
 
-# Aligned to the actual Bitable fields (秦海岩's Bitable, base XfS6bHR9DaecTHsEYd8coJNHnze).
-# 13 fields: Task ID, Name, Status, Round, Candidates, Speedup, Updated,
-#            Group, Bottleneck, Phase, Best Score, Baseline Score, Worker.
-# The "Worker" column is repurposed to carry host + workspace + session uuid info,
-# since the Bitable has no dedicated Host/Workspace/Session UUID columns.
+# Generic Bitable columns. Group/Bottleneck default to "General"/"Mixed" since
+# the platform is now generic (not FlashInfer-specific).
 ROW_FIELDS = ["Task ID", "Name", "Status", "Round", "Candidates", "Speedup",
               "Updated", "Group", "Bottleneck", "Phase", "Best Score", "Baseline Score", "Worker"]
 
 class FeishuSink:
     name = "feishu"
     def render(self, snapshot: ProjectSnapshot) -> None:
-        base = os.environ.get("FLOTILLA_FEISHU_BASE")
-        table = os.environ.get("FLOTILLA_FEISHU_TABLE")
-        rows = [self._row(t) for t in snapshot.tasks]
-        if not base or not table or not rows:
+        env_base = os.environ.get("FLOTILLA_FEISHU_BASE")
+        env_table = os.environ.get("FLOTILLA_FEISHU_TABLE")
+        if not snapshot.tasks:
             return
-        payload = {"fields": ROW_FIELDS,
-                   "rows": [[r.get(f, "") for f in ROW_FIELDS] for r in rows]}
-        subprocess.run(["lark-cli", "--as", "user", "base", "+record-batch-create",
-                        "--base-token", base, "--table-id", table,
-                        "--json", json.dumps(payload, ensure_ascii=False)], check=False)
+        # Group tasks by feishu target (per-project base/table overrides env).
+        groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for t in snapshot.tasks:
+            base = t.get("feishu_base") or env_base
+            table = t.get("feishu_table") or env_table
+            if base and table:
+                groups[(base, table)].append(t)
+        for (base, table), tasks in groups.items():
+            rows = [self._row(t) for t in tasks]
+            payload = {"fields": ROW_FIELDS,
+                       "rows": [[r.get(f, "") for f in ROW_FIELDS] for r in rows]}
+            subprocess.run(["lark-cli", "--as", "user", "base", "+record-batch-create",
+                            "--base-token", base, "--table-id", table,
+                            "--json", json.dumps(payload, ensure_ascii=False)], check=False)
     def _row(self, t: dict) -> dict:
         host = t.get("target_host") or "local"
         ws = t.get("workspace_path") or ""
@@ -49,7 +55,7 @@ class FeishuSink:
             "Candidates": t.get("candidates", 0),
             "Speedup": t.get("speedup") or 0,
             "Updated": t.get("updated") or t.get("timestamp"),
-            "Group": t.get("group") or "FlashInfer",
+            "Group": t.get("group") or "General",
             "Bottleneck": t.get("bottleneck") or "Mixed",
             "Phase": t.get("phase") or 0,
             "Best Score": t.get("speedup") or 0,
