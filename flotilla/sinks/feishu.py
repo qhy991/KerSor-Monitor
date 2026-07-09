@@ -2,6 +2,15 @@ from __future__ import annotations
 import json, os, subprocess
 from .base import ProjectSnapshot
 
+# Flotilla state → Bitable Status option (only 6 valid options in the table).
+_FEISHU_STATUS_MAP = {
+    "running": "running", "promoted": "promoted", "done": "promoted",
+    "stuck": "pending", "failed": "crashed", "abandoned": "abandoned",
+    "paused": "pending", "queued": "pending", "planned": "pending",
+}
+def _feishu_status(s: str) -> str:
+    return _FEISHU_STATUS_MAP.get((s or "pending").lower(), "pending")
+
 # Aligned to the actual Bitable fields (秦海岩's Bitable, base XfS6bHR9DaecTHsEYd8coJNHnze).
 # 13 fields: Task ID, Name, Status, Round, Candidates, Speedup, Updated,
 #            Group, Bottleneck, Phase, Best Score, Baseline Score, Worker.
@@ -35,7 +44,7 @@ class FeishuSink:
         return {
             "Task ID": t.get("id"),
             "Name": t.get("name"),
-            "Status": (t.get("state") or "").lower(),
+            "Status": _feishu_status(t.get("state") or "pending"),
             "Round": t.get("rounds", 0),
             "Candidates": t.get("candidates", 0),
             "Speedup": t.get("speedup") or 0,
