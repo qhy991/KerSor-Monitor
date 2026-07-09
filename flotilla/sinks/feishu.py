@@ -42,8 +42,8 @@ class FeishuSink:
             "Updated": t.get("updated") or t.get("timestamp"),
             "Group": t.get("group") or "FlashInfer",
             "Bottleneck": t.get("bottleneck") or "Mixed",
-            "Phase": t.get("phase") or t.get("rounds", 0),
-            "Best Score": t.get("speedup"),
-            "Baseline Score": t.get("baseline_score") or "",
+            "Phase": t.get("phase") or 0,
+            "Best Score": t.get("speedup") or 0,
+            "Baseline Score": t.get("baseline_score") or 0,
             "Worker": worker_info,
         }
