@@ -70,7 +70,9 @@ def worker_ping(body: dict):
     # fan out to dashboard
     from . import sinks
     pid = t.project_id
-    tasks = [{"id": t2.id, "name": t2.name, "state": t2.state, **rec}
+    tasks = [{"id": t2.id, "name": t2.name, "state": t2.state,
+              "workspace_path": t2.workspace_path, "target_host": t2.target_host,
+              **rec}
              for t2 in s.list_tasks(pid)]
     sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
     # terminal check (worker reports promoted/stuck/abandoned)

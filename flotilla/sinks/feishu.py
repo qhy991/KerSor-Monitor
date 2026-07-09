@@ -2,10 +2,10 @@ from __future__ import annotations
 import json, os, subprocess
 from .base import ProjectSnapshot
 
-# Field set carried over verbatim from kda-monitor monitor_state.FEISHU_ROW_FIELDS.
 ROW_FIELDS = ["Task ID", "Task Name", "Status", "Round", "Candidates", "Speedup",
               "Latency (ms)", "MFU", "Updated", "Experiment", "Engine", "Protocol",
-              "GPU", "Family", "Paper Flag", "Paper Caveat", "Harvest Ready"]
+              "GPU", "Family", "Paper Flag", "Paper Caveat", "Harvest Ready",
+              "Host", "Workspace", "Session UUID"]
 
 class FeishuSink:
     name = "feishu"
@@ -20,7 +20,7 @@ class FeishuSink:
                    "rows": [[r.get(f, "") for f in ROW_FIELDS] for r in rows]}
         subprocess.run(["lark-cli", "--as", "user", "base", "+record-batch-create",
                         "--base-token", self._base, "--table-id", self._table,
-                        "--json", json.dumps(payload)], check=False)
+                        "--json", json.dumps(payload, ensure_ascii=False)], check=False)
     def _row(self, t: dict) -> dict:
         return {
             "Task ID": t.get("id"), "Task Name": t.get("name"), "Status": t.get("state"),
@@ -30,4 +30,7 @@ class FeishuSink:
             **{k: t.get(k.lower().replace(" ", "_"), "") for k in
                ["Experiment", "Engine", "Protocol", "GPU", "Family",
                 "Paper Flag", "Paper Caveat", "Harvest Ready"]},
+            "Host": t.get("target_host") or "local",
+            "Workspace": t.get("workspace_path") or "",
+            "Session UUID": t.get("session_uuid") or "",
         }

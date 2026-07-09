@@ -76,7 +76,9 @@ def observe_and_record(store: Store, worker_id: str, handle: WorkerHandle) -> di
     rec["exited"] = exited
     store.append_event(models.Event(task_id=handle.task_id, type="status", payload=rec))
     from . import sinks
-    tasks = [{"id": t.id, "name": t.name, "state": t.state, **rec}
+    tasks = [{"id": t.id, "name": t.name, "state": t.state,
+              "workspace_path": t.workspace_path, "target_host": t.target_host,
+              **rec}
              for t in store.list_tasks(_project_of(store, handle.task_id))]
     sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
     return rec
