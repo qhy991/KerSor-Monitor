@@ -1,8 +1,11 @@
 # Flotilla
 
+> **Flotilla** /fləˈtɪlə/ — n. **一支由小船组成的舰队**，由旗舰统一指挥调度。
+> 每个 Claude Code worker 像一艘独立航行的船——自主执行任务、回报状态——而 Flotilla API 是旗舰：调度派遣、实时监控、随时 steering。
+
 Self-hosted, **resource-aware batch agent-task platform**: run many agent workers in
-parallel on limited GPUs/machines, watch them on a live dashboard, steer the stuck
-ones, harvest results. Hackathon MVP.
+parallel on local or remote (SSH) machines, watch them on a live dashboard, steer
+the stuck ones, harvest results. Hackathon MVP.
 
 Forked from [`kda-monitor`](https://github.com/qhy991/KerSor-Monitor), where the
 orchestration core was proven on B200 GPU-kernel batch optimization.
