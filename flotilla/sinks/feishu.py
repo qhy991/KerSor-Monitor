@@ -55,7 +55,7 @@ class FeishuSink:
             "Candidates": t.get("candidates", 0),
             "Speedup": t.get("speedup") or 0,
             "Updated": t.get("updated") or t.get("timestamp"),
-            "Group": t.get("group") or "General",
+            "Group": t.get("group") or "FlashInfer",
             "Bottleneck": t.get("bottleneck") or "Mixed",
             "Phase": t.get("phase") or 0,
             "Best Score": t.get("speedup") or 0,
