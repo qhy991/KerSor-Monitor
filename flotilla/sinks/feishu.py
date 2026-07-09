@@ -38,7 +38,7 @@ class FeishuSink:
             "Status": (t.get("state") or "").lower(),
             "Round": t.get("rounds", 0),
             "Candidates": t.get("candidates", 0),
-            "Speedup": t.get("speedup"),
+            "Speedup": t.get("speedup") or 0,
             "Updated": t.get("updated") or t.get("timestamp"),
             "Group": t.get("group") or "FlashInfer",
             "Bottleneck": t.get("bottleneck") or "Mixed",
