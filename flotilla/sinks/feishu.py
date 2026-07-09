@@ -13,9 +13,16 @@ ROW_FIELDS = ["Task ID", "Name", "Status", "Round", "Candidates", "Speedup",
 class FeishuSink:
     name = "feishu"
     def __init__(self):
-        self._base = os.environ.get("FLOTILLA_FEISHU_BASE")
-        self._table = os.environ.get("FLOTILLA_FEISHU_TABLE")
+        self._base = None
+        self._table = None
+        self._loaded = False
+    def _load(self):
+        if not self._loaded:
+            self._base = os.environ.get("FLOTILLA_FEISHU_BASE")
+            self._table = os.environ.get("FLOTILLA_FEISHU_TABLE")
+            self._loaded = True
     def render(self, snapshot: ProjectSnapshot) -> None:
+        self._load()
         rows = [self._row(t) for t in snapshot.tasks]
         if not self._base or not self._table or not rows:
             return
@@ -36,7 +43,7 @@ class FeishuSink:
         return {
             "Task ID": t.get("id"),
             "Name": t.get("name"),
-            "Status": t.get("state"),
+            "Status": (t.get("state") or "").lower(),
             "Round": t.get("rounds", 0),
             "Candidates": t.get("candidates", 0),
             "Speedup": t.get("speedup"),
