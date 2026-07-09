@@ -87,7 +87,7 @@ class ClaudeCodeTmuxRuntime:
             _ssh(host, f"chmod +x {workspace}/runs/start.sh")
             _ssh(host, f"tmux has-session -t {sess} 2>/dev/null || tmux new-session -d -s {sess}")
             _ssh(host, f"tmux kill-window -t {sess}:{win} 2>/dev/null; true")
-            _ssh(host, f"tmux new-window -t {sess} -n {win} 'bash {workspace}/runs/start.sh'")
+            _ssh(host, f"tmux new-window -a -d -t {sess} -n {win} 'bash {workspace}/runs/start.sh'")
             panes = _ssh(host, f"tmux list-panes -t {sess}:{win} -F '#{{pane_id}}'").stdout.strip().splitlines()
             pane = panes[0] if panes else ""
         else:
@@ -99,7 +99,7 @@ class ClaudeCodeTmuxRuntime:
             subprocess.run(["tmux", "has-session", "-t", sess], check=False).returncode == 0 or \
                 subprocess.run(["tmux", "new-session", "-d", "-s", sess], check=True)
             subprocess.run(["tmux", "kill-window", "-t", f"{sess}:{win}"], check=False)
-            subprocess.run(["tmux", "new-window", "-t", sess, "-n", win, f"bash {workspace}/runs/start.sh"], check=True)
+            subprocess.run(["tmux", "new-window", "-a", "-d", "-t", sess, "-n", win, f"bash {workspace}/runs/start.sh"], check=True)
             pane = subprocess.run(["tmux", "list-panes", "-t", f"{sess}:{win}", "-F", "#{pane_id}"],
                                   capture_output=True, text=True, check=True).stdout.strip().splitlines()[0]
 
