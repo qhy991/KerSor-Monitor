@@ -72,7 +72,7 @@ class Store:
     # --- workers ---
     def create_worker(self, w: models.Worker) -> None:
         with self._conn() as c:
-            c.execute("""INSERT INTO worker(id,task_id,status,session_handle,session_uuid,pane_id,pid,
+            c.execute("""INSERT OR REPLACE INTO worker(id,task_id,status,session_handle,session_uuid,pane_id,pid,
               resource_lock_id,started_at,ended_at,extra) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
               (w.id, w.task_id, w.status, w.session_handle, w.session_uuid, w.pane_id, w.pid,
                w.resource_lock_id, w.started_at, w.ended_at, json.dumps(w.extra)))
