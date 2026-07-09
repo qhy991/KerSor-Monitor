@@ -12,24 +12,16 @@ ROW_FIELDS = ["Task ID", "Name", "Status", "Round", "Candidates", "Speedup",
 
 class FeishuSink:
     name = "feishu"
-    def __init__(self):
-        self._base = None
-        self._table = None
-        self._loaded = False
-    def _load(self):
-        if not self._loaded:
-            self._base = os.environ.get("FLOTILLA_FEISHU_BASE")
-            self._table = os.environ.get("FLOTILLA_FEISHU_TABLE")
-            self._loaded = True
     def render(self, snapshot: ProjectSnapshot) -> None:
-        self._load()
+        base = os.environ.get("FLOTILLA_FEISHU_BASE")
+        table = os.environ.get("FLOTILLA_FEISHU_TABLE")
         rows = [self._row(t) for t in snapshot.tasks]
-        if not self._base or not self._table or not rows:
+        if not base or not table or not rows:
             return
         payload = {"fields": ROW_FIELDS,
                    "rows": [[r.get(f, "") for f in ROW_FIELDS] for r in rows]}
         subprocess.run(["lark-cli", "--as", "user", "base", "+record-batch-create",
-                        "--base-token", self._base, "--table-id", self._table,
+                        "--base-token", base, "--table-id", table,
                         "--json", json.dumps(payload, ensure_ascii=False)], check=False)
     def _row(self, t: dict) -> dict:
         host = t.get("target_host") or "local"
