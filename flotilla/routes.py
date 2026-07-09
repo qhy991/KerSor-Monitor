@@ -99,6 +99,50 @@ def delete_host(hid: str):
     _store().delete_host(hid)
     return {"deleted": hid}
 
+# --- templates ---
+@router.get("/templates")
+def list_templates():
+    return _store().list_templates()
+
+@router.post("/templates", status_code=201)
+def create_template(t: models.Template):
+    _store().create_template(t)
+    return {"id": t.id}
+
+@router.delete("/templates/{tid}")
+def delete_template(tid: str):
+    _store().delete_template(tid)
+    return {"deleted": tid}
+
+def _seed_builtin_templates():
+    """Called once at startup to ensure built-in templates exist."""
+    s = _store()
+    builtins = [
+        models.Template(id="blank", name="任意任务", spec="", builtin=True),
+        models.Template(id="write-tests", name="写测试",
+            spec="Read the code in this workspace and write comprehensive pytest tests.\n"
+                 "Place test files alongside the source. Run pytest to verify all pass.\n"
+                 "Write status.json with your progress.",
+            builtin=True),
+        models.Template(id="code-review", name="Code Review",
+            spec="Review all code files in this workspace.\n"
+                 "Identify bugs, security issues, and performance problems.\n"
+                 "Write findings to review.md with severity ratings.",
+            builtin=True),
+        models.Template(id="fix-bug", name="修 Bug",
+            spec="Investigate and fix the issue described below.\n"
+                 "Write tests to reproduce the bug, then fix it.\n"
+                 "Verify all existing tests still pass.\n\n"
+                 "Issue: [describe the bug here]",
+            builtin=True),
+        models.Template(id="general-script", name="通用脚本",
+            spec="Execute the following task in this workspace:\n\n[describe what to do]",
+            runtime="shell", builtin=True),
+    ]
+    for t in builtins:
+        if s.get_template(t.id) is None:
+            s.create_template(t)
+
 @router.post("/tasks/{tid}/actuate", status_code=202)
 def actuate(tid: str, body: dict):
     t = _store().get_task(tid)

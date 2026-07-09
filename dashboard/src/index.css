@@ -139,6 +139,13 @@ body { background: var(--bg); color: var(--text); }
 }
 .btn:hover { filter: brightness(1.08); }
 .btn:active { filter: brightness(0.95); }
+.btn-ghost {
+  background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+  font-size: 12px; padding: 5px 10px;
+}
+.btn-ghost:hover { background: var(--surface); color: var(--text); }
+.select-tmpl { width: 220px; }
+.advanced-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
 .empty { color: var(--text-dim); padding: 48px 0; text-align: center; font-size: 14px; }
 
 /* submit-task form */

@@ -9,6 +9,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Flotilla")
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     db.init(config.SETTINGS.db_path)
+    from .routes import _seed_builtin_templates
+    _seed_builtin_templates()
     import os
     from . import scheduler, observer, store
     if os.environ.get("FLOTILLA_START_SCHEDULER") == "1":

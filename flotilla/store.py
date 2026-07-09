@@ -121,3 +121,27 @@ class Store:
     def delete_host(self, hid: str) -> None:
         with self._conn() as c:
             c.execute("DELETE FROM host WHERE id=?", (hid,))
+
+    # --- templates ---
+    def create_template(self, t: models.Template) -> None:
+        with self._conn() as c:
+            c.execute("""INSERT OR REPLACE INTO template(id,name,spec,runtime,effort,evaluator,builtin,created_at)
+              VALUES(?,?,?,?,?,?,?,?)""",
+              (t.id, t.name, t.spec, t.runtime, t.effort, t.evaluator,
+               1 if t.builtin else 0, t.created_at))
+    def list_templates(self) -> list[models.Template]:
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM template ORDER BY builtin DESC, id").fetchall()
+        return [models.Template(id=r["id"], name=r["name"], spec=r["spec"], runtime=r["runtime"],
+                effort=r["effort"] or "", evaluator=r["evaluator"], builtin=bool(r["builtin"]),
+                created_at=r["created_at"]) for r in rows]
+    def get_template(self, tid: str) -> models.Template | None:
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM template WHERE id=?", (tid,)).fetchone()
+        if not r: return None
+        return models.Template(id=r["id"], name=r["name"], spec=r["spec"], runtime=r["runtime"],
+                effort=r["effort"] or "", evaluator=r["evaluator"], builtin=bool(r["builtin"]),
+                created_at=r["created_at"])
+    def delete_template(self, tid: str) -> None:
+        with self._conn() as c:
+            c.execute("DELETE FROM template WHERE id=? AND builtin=0", (tid,))

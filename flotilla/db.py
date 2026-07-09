@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS event(
   id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, type TEXT, payload TEXT, ts TEXT);
 CREATE TABLE IF NOT EXISTS host(
   id TEXT PRIMARY KEY, ssh_alias TEXT, remote_root TEXT, gpu TEXT, notes TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS template(
+  id TEXT PRIMARY KEY, name TEXT, spec TEXT, runtime TEXT, effort TEXT, evaluator TEXT,
+  builtin INTEGER DEFAULT 0, created_at TEXT);
 """
 
 def connect(path: str) -> sqlite3.Connection:

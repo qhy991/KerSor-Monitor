@@ -32,3 +32,13 @@ export interface Summary {
   failed: number;
   paused: number;
 }
+
+export interface Template {
+  id: string;
+  name: string;
+  spec: string;
+  runtime: string;
+  effort: string;
+  evaluator: string | null;
+  builtin: boolean;
+}

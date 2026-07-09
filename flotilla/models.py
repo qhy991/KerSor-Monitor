@@ -54,3 +54,13 @@ class Host(BaseModel):
     gpu: str | None = None  # e.g. "B200"; informational
     notes: str = ""
     created_at: str = Field(default_factory=_now)
+
+class Template(BaseModel):
+    id: str               # unique slug, e.g. "write-tests"
+    name: str             # display name
+    spec: str             # the prompt text (pre-fills the spec textarea)
+    runtime: str = "claude_tmux"
+    effort: str = ""      # "" = default
+    evaluator: str | None = None
+    builtin: bool = False  # built-in templates can't be deleted
+    created_at: str = Field(default_factory=_now)

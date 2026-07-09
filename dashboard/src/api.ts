@@ -1,4 +1,4 @@
-import type { Task, Host, Summary } from './types';
+import type { Task, Host, Summary, Template } from './types';
 const base = '';
 
 export async function listTasks(pid: string): Promise<Task[]> {
@@ -75,6 +75,21 @@ export function subscribe(tid: string, onEvt: (t: Task) => void): EventSource {
   const es = new EventSource(`${base}/tasks/${tid}/events`);
   es.onmessage = (e) => onEvt(JSON.parse(e.data));
   return es;
+}
+
+// --- templates ---
+export async function getTemplates(): Promise<Template[]> {
+  const r = await fetch(`${base}/templates`);
+  return r.json();
+}
+export async function createTemplate(t: { id: string; name: string; spec: string; runtime?: string; effort?: string; evaluator?: string | null }): Promise<void> {
+  await fetch(`${base}/templates`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...t, builtin: false }),
+  });
+}
+export async function deleteTemplate(id: string): Promise<void> {
+  await fetch(`${base}/templates/${id}`, { method: 'DELETE' });
 }
 
 // --- hosts (accessible hardware) ---
