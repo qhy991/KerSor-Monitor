@@ -54,6 +54,10 @@ class ClaudeCodeTmuxRuntime:
         model = worker_model or SETTINGS.worker_model
         effort = meta.get("effort")
         effort_flag = f" --effort {effort}" if effort else ""
+        # Allow a per-task command override via metadata, so a worker can source a
+        # host env script and cd into a project dir before launching claude (e.g. a
+        # KerSor round). Falls back to the default claude command below.
+        boot_command = boot_command or meta.get("boot_command")
         cmd = boot_command or f"claude --model {model}{effort_flag} --permission-mode auto 'Read runs/combined_prompt.md and begin.'"
         # Worker-push heartbeat: if FLOTILLA_API_URL is set, the worker pushes its
         # status.json to the api every 60s (event-driven, no SSH polling needed).
@@ -146,22 +150,28 @@ class ClaudeCodeTmuxRuntime:
     def observe(self, handle: WorkerHandle) -> Observation:
         h = handle.handle
         host = h.get("host") if isinstance(h, dict) else None
+        state, speedup, rounds, best = "running", None, 0, None
         if host:
             capture = _ssh(host, f"tmux capture-pane -p -t {h['pane']} -S -20").stdout
             r = _ssh(host, f"cat {handle.workspace}/status.json 2>/dev/null")
-            state = "running"
             if r.stdout.strip():
-                try: state = json.loads(r.stdout).get("state", state)
+                try:
+                    st = json.loads(r.stdout)
+                    state = st.get("state", state); speedup = st.get("speedup")
+                    rounds = st.get("rounds", 0); best = st.get("best_candidate")
                 except Exception: pass
         else:
             capture = subprocess.run(["tmux", "capture-pane", "-p", "-t", h["pane"], "-S", "-20"],
                                      capture_output=True, text=True, check=False).stdout
-            ws = Path(handle.workspace); state = "running"
-            p = ws / "status.json"
+            p = Path(handle.workspace) / "status.json"
             if p.exists():
-                try: state = json.loads(p.read_text()).get("state", state)
+                try:
+                    st = json.loads(p.read_text())
+                    state = st.get("state", state); speedup = st.get("speedup")
+                    rounds = st.get("rounds", 0); best = st.get("best_candidate")
                 except Exception: pass
-        return Observation(state=state, exited="Worker exited" in capture, pane_tail=capture[-800:])
+        return Observation(state=state, exited="Worker exited" in capture, pane_tail=capture[-800:],
+                           speedup=speedup, rounds=rounds, best_candidate=best)
 
     def paste(self, handle: WorkerHandle, text: str) -> None:
         h = handle.handle

@@ -12,6 +12,10 @@ def create_project(p: models.Project):
     _store().create_project(p)
     return {"id": p.id}
 
+@router.get("/projects")
+def list_projects():
+    return _store().list_projects()
+
 @router.post("/projects/{pid}/tasks", status_code=201)
 def create_tasks(pid: str, tasks: list[models.Task]):
     # project_id is assigned from the URL path; the typed body validates the rest of the fields.
@@ -33,6 +37,23 @@ def get_task(tid: str):
 @router.get("/projects/{pid}/tasks")
 def list_tasks(pid: str):
     return _store().list_tasks(pid)
+
+@router.delete("/tasks/{tid}")
+def delete_task(tid: str):
+    s = _store()
+    t = s.get_task(tid)
+    if t is None:
+        raise HTTPException(404, "task not found")
+    # Stop a live worker first (best-effort): ends the remote tmux window and frees
+    # the handle. No live handle just means there is nothing to stop — still remove
+    # the record. The workspace on the host is kept.
+    from . import actuator
+    try:
+        actuator.actuate(s, tid, "stop", {})
+    except Exception:
+        pass
+    s.delete_task(tid)
+    return {"deleted": tid}
 
 # --- hosts (accessible hardware) ---
 @router.get("/hosts")
@@ -75,6 +96,7 @@ def worker_ping(body: dict):
                    "feishu_table": proj.feishu_table if proj else None}
     tasks = [{"id": t2.id, "name": t2.name, "state": t2.state,
               "workspace_path": t2.workspace_path, "target_host": t2.target_host,
+              "owner": t2.owner,
               "rounds": rec.get("rounds", 0),
               "candidates": rec.get("candidates", 0),
               "speedup": rec.get("speedup"), "timestamp": rec.get("timestamp"),
@@ -154,6 +176,9 @@ def actuate(tid: str, body: dict):
     from . import actuator
     res = actuator.actuate(_store(), tid, body.get("action", ""), body.get("payload", {}))
     if not res["ok"]: raise HTTPException(409, res.get("reason", "actuate failed"))
+    # Record steering history: who nudged what text, when.
+    _store().append_event(models.Event(task_id=tid, type="nudge",
+        payload={"action": body.get("action", ""), "payload": body.get("payload", {})}))
     return res
 
 from fastapi.responses import StreamingResponse

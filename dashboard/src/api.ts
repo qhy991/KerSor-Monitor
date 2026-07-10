@@ -1,4 +1,4 @@
-import type { Task, Host, Summary, Template } from './types';
+import type { Task, Host, Project, Summary, Template } from './types';
 const base = '';
 
 export async function listTasks(pid: string): Promise<Task[]> {
@@ -6,12 +6,25 @@ export async function listTasks(pid: string): Promise<Task[]> {
   return r.json();
 }
 
-export async function createProject(pid: string, name: string = pid): Promise<void> {
+export async function getProjects(): Promise<Project[]> {
+  const r = await fetch(`${base}/projects`);
+  return r.json();
+}
+
+export async function createProject(
+  pid: string,
+  name: string = pid,
+  opts: { feishu_base?: string | null; feishu_table?: string | null } = {},
+): Promise<void> {
   await fetch(`${base}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: pid, name }),
+    body: JSON.stringify({ id: pid, name, ...opts }),
   });
+}
+
+export async function deleteTask(tid: string): Promise<void> {
+  await fetch(`${base}/tasks/${tid}`, { method: 'DELETE' });
 }
 
 export async function createTasks(
@@ -22,6 +35,7 @@ export async function createTasks(
     spec: string;
     runtime: string;
     evaluator?: string | null;
+    owner?: string | null;
     target_host?: string | null;
     metadata?: { effort?: string; [key: string]: unknown };
   }[],
@@ -47,6 +61,7 @@ export async function ensureProjectAndCreateTasks(
     spec: string;
     runtime: string;
     evaluator?: string | null;
+    owner?: string | null;
     target_host?: string | null;
     metadata?: { effort?: string; [key: string]: unknown };
   }[],

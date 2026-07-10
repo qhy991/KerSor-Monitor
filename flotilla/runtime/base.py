@@ -14,6 +14,9 @@ class Observation:
     state: str = "running"       # worker.status value (running|promoted|stuck|...)
     exited: bool = False
     pane_tail: str = ""
+    speedup: float | None = None   # from worker status.json (for sinks/dashboard)
+    rounds: int = 0
+    best_candidate: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 class Runtime(Protocol):

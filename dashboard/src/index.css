@@ -132,6 +132,9 @@ body { background: var(--bg); color: var(--text); }
 }
 .nudge { display: flex; gap: 8px; margin-top: 4px; }
 .nudge input { flex: 1; min-width: 0; }
+.card-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
+.card-delete { margin-left: 0; color: var(--danger, #d9534f); }
+.grid-filter { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .btn {
   padding: 8px 14px; border: none; border-radius: 8px; background: var(--accent);
   color: #fff; font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;

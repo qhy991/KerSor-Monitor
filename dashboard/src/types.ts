@@ -6,6 +6,7 @@ export interface Task {
   rounds: number;
   candidates: number;
   runtime: string;
+  owner?: string | null;
   target_host?: string | null;
   session_uuid?: string | null;
   last_activity?: string;
@@ -13,6 +14,14 @@ export interface Task {
   tokens?: number;
   pane_tail?: string;
   metadata?: { effort?: string; [key: string]: unknown };
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  feishu_base?: string | null;
+  feishu_table?: string | null;
+  created_at?: string;
 }
 
 export interface Host {

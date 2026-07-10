@@ -25,6 +25,7 @@ class Task(BaseModel):
     target_host: str | None = None  # ssh host for remote execution (None = local)
     resource_req: dict[str, Any] = Field(default_factory=dict)  # e.g. {"kind":"gpu"} or {}
     evaluator: str | None = None
+    owner: str | None = None       # who submitted this task (multi-user)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)

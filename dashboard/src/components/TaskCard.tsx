@@ -3,7 +3,7 @@ import { NudgeButton } from './NudgeButton';
 
 const stateClass = (s: string) => 's-' + s.toLowerCase();
 
-export function TaskCard({ t }: { t: Task }) {
+export function TaskCard({ t, onDelete }: { t: Task; onDelete?: (tid: string) => void }) {
   const effort = t.metadata?.effort;
   return (
     <div className={'card ' + stateClass(t.state)}>
@@ -11,6 +11,7 @@ export function TaskCard({ t }: { t: Task }) {
         <div className="card-head-left">
           <span className="card-id">{t.id}</span>
           {t.target_host && <span className="badge badge-host">{t.target_host}</span>}
+          {t.owner && <span className="badge badge-effort">@{t.owner}</span>}
           {effort && <span className="badge badge-effort">{effort}</span>}
         </div>
         <span className={'badge ' + stateClass(t.state)}>{t.state}</span>
@@ -34,12 +35,15 @@ export function TaskCard({ t }: { t: Task }) {
         </div>
       )}
       {t.pane_tail && (
-        <div className="card-pane">
-          <pre>{t.pane_tail}</pre>
-        </div>
+        <div className="card-pane"><pre>{t.pane_tail}</pre></div>
       )}
       {(t.state === 'STUCK' || t.state === 'RUNNING' || t.state === 'PAUSED') && (
         <NudgeButton tid={t.id} />
+      )}
+      {onDelete && (
+        <div className="card-actions">
+          <button className="btn btn-mini card-delete" onClick={() => onDelete(t.id)}>Delete</button>
+        </div>
       )}
     </div>
   );

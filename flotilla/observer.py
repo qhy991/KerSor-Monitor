@@ -23,10 +23,12 @@ def observe_and_record(store: Store, worker_id: str, handle: WorkerHandle) -> di
         try:
             obs = rt.observe(handle)
             state, exited, pane_tail = obs.state, obs.exited, obs.pane_tail
+            speedup, rounds, best = obs.speedup, obs.rounds, obs.best_candidate
         except Exception:
             state, exited, pane_tail = "running", False, ""
-        rec = {"status_state": state, "speedup": None, "rounds": 0, "candidates": 0,
-               "timestamp": "", "pane_tail": pane_tail[-300:]}
+            speedup, rounds, best = None, 0, None
+        rec = {"status_state": state, "speedup": speedup, "rounds": rounds, "candidates": 0,
+               "best_candidate": best, "timestamp": "", "pane_tail": pane_tail[-300:]}
         # best-effort uuid mine (for the record)
         if hasattr(rt, "mine_session_uuid"):
             try:
@@ -127,7 +129,7 @@ def _map_terminal(status_state: str | None, exited: bool) -> str | None:
     """Map worker status.json state + exit signal to a task state (or None=still running)."""
     if status_state in ("promoted", "complete"):
         return "DONE"
-    if status_state == "stuck":
+    if status_state in ("stuck", "stalled"):
         return "STUCK"
     if status_state == "abandoned":
         return "FAILED"

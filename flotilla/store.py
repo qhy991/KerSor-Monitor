@@ -26,15 +26,19 @@ class Store:
         return models.Project(id=r["id"], name=r["name"], config=json.loads(r["config"]),
                               feishu_base=r["feishu_base"], feishu_table=r["feishu_table"],
                               created_at=r["created_at"])
+    def list_projects(self) -> list[models.Project]:
+        with self._conn() as c:
+            rows = c.execute("SELECT id FROM project ORDER BY created_at, id").fetchall()
+        return [self.get_project(r["id"]) for r in rows]
 
     # --- tasks ---
     def create_task(self, t: models.Task) -> None:
         with self._conn() as c:
             c.execute("""INSERT INTO task(id,project_id,name,spec,state,workspace_path,
-              runtime,target_host,resource_req,evaluator,metadata,created_at,updated_at)
-              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              runtime,target_host,resource_req,evaluator,owner,metadata,created_at,updated_at)
+              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (t.id, t.project_id, t.name, t.spec, t.state, t.workspace_path, t.runtime,
-               t.target_host, json.dumps(t.resource_req), t.evaluator, json.dumps(t.metadata),
+               t.target_host, json.dumps(t.resource_req), t.evaluator, t.owner, json.dumps(t.metadata),
                t.created_at, t.updated_at))
     def get_task(self, tid: str) -> models.Task | None:
         with self._conn() as c:
@@ -43,7 +47,7 @@ class Store:
         return models.Task(id=r["id"], project_id=r["project_id"], name=r["name"], spec=r["spec"],
             state=r["state"], workspace_path=r["workspace_path"], runtime=r["runtime"],
             target_host=r["target_host"], resource_req=json.loads(r["resource_req"]),
-            evaluator=r["evaluator"], metadata=json.loads(r["metadata"]),
+            evaluator=r["evaluator"], owner=r["owner"], metadata=json.loads(r["metadata"]),
             created_at=r["created_at"], updated_at=r["updated_at"])
     def list_tasks(self, project_id: str) -> list[models.Task]:
         with self._conn() as c:
@@ -52,6 +56,13 @@ class Store:
     def set_task_state(self, tid: str, new_state: str) -> None:
         with self._conn() as c:
             c.execute("UPDATE task SET state=?, updated_at=? WHERE id=?", (new_state, _now(), tid))
+    def delete_task(self, tid: str) -> None:
+        # Remove the task and its bookkeeping (events, worker rows). The remote
+        # workspace on the host is intentionally NOT touched — only the board record.
+        with self._conn() as c:
+            c.execute("DELETE FROM event WHERE task_id=?", (tid,))
+            c.execute("DELETE FROM worker WHERE task_id=?", (tid,))
+            c.execute("DELETE FROM task WHERE id=?", (tid,))
     def set_workspace(self, tid: str, path: str) -> None:
         with self._conn() as c:
             c.execute("UPDATE task SET workspace_path=?, updated_at=? WHERE id=?", (path, _now(), tid))

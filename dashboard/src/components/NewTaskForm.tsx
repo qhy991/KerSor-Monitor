@@ -17,6 +17,7 @@ export function NewTaskForm({
   const [evaluator, setEvaluator] = useState('');
   const [host, setHost] = useState('local');
   const [effort, setEffort] = useState('');
+  const [owner, setOwner] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -45,7 +46,8 @@ export function NewTaskForm({
       await ensureProjectAndCreateTasks(pid, [
         { id, name: id, spec: spec.trim(), runtime, evaluator: evaluator || null,
           target_host: host === 'local' ? null : host,
-          metadata: Object.keys(metadata).length > 0 ? metadata : undefined },
+          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+        owner: owner || undefined },
       ]);
       onSubmitted();
     } catch (e2) {
@@ -122,6 +124,10 @@ export function NewTaskForm({
             </select>
           </label>
           <label className="field">
+            owner
+            <input className="input input-sm" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="your name" />
+          </label>
+          <label className="field">
             evaluator
             <select className="select" value={evaluator} onChange={(e) => setEvaluator(e.target.value)}>
               <option value="">none</option>
@@ -132,7 +138,7 @@ export function NewTaskForm({
       )}
       <div className="newtask-row newtask-foot">
         <span className="hint">
-          submits to project <b>{pid || '—'}</b> on <b>{host}</b>
+          submits to project <b>{pid || '—'}</b> on <b>{host}</b>{owner ? ` · by @${owner}` : ''}
           {effort ? ` · effort=${effort}` : ''}
         </span>
         <div style={{ display: 'flex', gap: 8 }}>

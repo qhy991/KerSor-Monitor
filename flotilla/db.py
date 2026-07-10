@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS project(
 CREATE TABLE IF NOT EXISTS task(
   id TEXT PRIMARY KEY, project_id TEXT, name TEXT, spec TEXT, state TEXT,
   workspace_path TEXT, runtime TEXT, target_host TEXT, resource_req TEXT, evaluator TEXT,
-  metadata TEXT, created_at TEXT, updated_at TEXT);
+  owner TEXT, metadata TEXT, created_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS worker(
   id TEXT PRIMARY KEY, task_id TEXT, status TEXT, session_handle TEXT,
   session_uuid TEXT, pane_id TEXT, pid INTEGER, resource_lock_id TEXT, started_at TEXT,
@@ -43,6 +43,10 @@ def init(path: str) -> None:
         pass
     try:
         conn.execute("ALTER TABLE project ADD COLUMN feishu_table TEXT")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE task ADD COLUMN owner TEXT")
     except Exception:
         pass
     conn.commit()
