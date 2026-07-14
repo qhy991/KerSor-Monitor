@@ -74,10 +74,19 @@ class Store:
         with self._conn() as c:
             rows = c.execute("SELECT id FROM task ORDER BY id").fetchall()
         return [self.get_task(r["id"]) for r in rows]
-    def task_counts(self) -> dict:
+    def task_counts(self, project_id: str | None = None) -> dict:
         with self._conn() as c:
-            rows = c.execute("SELECT state, COUNT(*) as cnt FROM task GROUP BY state").fetchall()
+            if project_id is None:
+                rows = c.execute("SELECT state, COUNT(*) as cnt FROM task GROUP BY state").fetchall()
+            else:
+                rows = c.execute("SELECT state, COUNT(*) as cnt FROM task WHERE project_id=? GROUP BY state",
+                                 (project_id,)).fetchall()
         return {r["state"]: r["cnt"] for r in rows}
+    def active_worker_id(self, task_id: str) -> str | None:
+        with self._conn() as c:
+            r = c.execute("SELECT id FROM worker WHERE task_id=? AND ended_at IS NULL "
+                          "ORDER BY started_at DESC LIMIT 1", (task_id,)).fetchone()
+        return r["id"] if r else None
     def active_workers(self) -> int:
         with self._conn() as c:
             return c.execute("SELECT COUNT(*) FROM worker WHERE ended_at IS NULL").fetchone()[0]
@@ -112,6 +121,15 @@ class Store:
     def events_for(self, tid: str) -> list[models.Event]:
         with self._conn() as c:
             rows = c.execute("SELECT * FROM event WHERE task_id=? ORDER BY id", (tid,)).fetchall()
+        return [models.Event(id=r["id"], task_id=r["task_id"], type=r["type"],
+                             payload=json.loads(r["payload"]), ts=r["ts"]) for r in rows]
+    def status_events(self, tid: str, limit: int = 200) -> list[models.Event]:
+        # Recent 'status' events oldest->newest, for the progress trajectory.
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM event WHERE task_id=? AND type='status' ORDER BY id DESC LIMIT ?",
+                (tid, limit)).fetchall()
+        rows = list(reversed(rows))
         return [models.Event(id=r["id"], task_id=r["task_id"], type=r["type"],
                              payload=json.loads(r["payload"]), ts=r["ts"]) for r in rows]
 

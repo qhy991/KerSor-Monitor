@@ -24,6 +24,17 @@ export interface Project {
   created_at?: string;
 }
 
+export interface TaskPoint {
+  ts: string;
+  state: string | null;
+  speedup: number | null;
+  rounds: number | null;
+  candidates: number | null;
+  last_tool?: string | null;
+  last_activity?: string | null;
+  tokens?: number | null;
+}
+
 export interface Host {
   id: string;
   ssh_alias: string;

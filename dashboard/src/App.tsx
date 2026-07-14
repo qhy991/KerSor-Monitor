@@ -3,8 +3,8 @@ import { TaskGrid } from './components/TaskGrid';
 import { NewTaskForm } from './components/NewTaskForm';
 import { NewProjectForm } from './components/NewProjectForm';
 import { HardwarePanel } from './components/HardwarePanel';
-import { getHosts, getProjects, getSummary } from './api';
-import type { Host, Project, Summary } from './types';
+import { getHosts, getProjects } from './api';
+import type { Host, Project } from './types';
 
 export default function App() {
   const [pid, setPid] = useState('demo');
@@ -12,13 +12,9 @@ export default function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [hosts, setHosts] = useState<Host[]>([]);
-  const [summary, setSummary] = useState<Summary>({ total: 0, running: 0, done: 0, stuck: 0, queued: 0, failed: 0, paused: 0 });
 
   async function loadHosts() {
     try { setHosts(await getHosts()); } catch { /* */ }
-  }
-  async function loadSummary() {
-    try { setSummary(await getSummary()); } catch { /* */ }
   }
   async function loadProjects() {
     try {
@@ -32,8 +28,6 @@ export default function App() {
   useEffect(() => {
     loadProjects();
     loadHosts();
-    const interval = setInterval(loadSummary, 3000);
-    return () => clearInterval(interval);
   }, []);
 
   return (
@@ -64,16 +58,9 @@ export default function App() {
           }}
         />
       )}
-      <div className="kpi-bar">
-        <span className="kpi-pill kpi-total">{summary.total} total</span>
-        <span className="kpi-pill kpi-queued">{summary.queued} queued</span>
-        <span className="kpi-pill kpi-running">{summary.running} running</span>
-        <span className="kpi-pill kpi-done">{summary.done} done</span>
-        {summary.stuck > 0 && <span className="kpi-pill kpi-stuck">{summary.stuck} stuck</span>}
-        {summary.failed > 0 && <span className="kpi-pill kpi-failed">{summary.failed} failed</span>}
-      </div>
       <HardwarePanel onChange={loadHosts} />
-      <NewTaskForm pid={pid} hosts={hosts} onSubmitted={() => { setReloadKey((k) => k + 1); loadSummary(); loadProjects(); }} />
+      <NewTaskForm pid={pid} hosts={hosts} onSubmitted={() => { setReloadKey((k) => k + 1); loadProjects(); }} />
+      {/* Per-project campaign roll-up + progress lives in TaskGrid (computed live from the task map). */}
       <TaskGrid pid={pid} reloadKey={reloadKey} />
     </div>
   );

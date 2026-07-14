@@ -6,10 +6,17 @@ from flotilla.sinks.base import ProjectSnapshot
 def test_registry():
     assert "web" in sinks.REGISTRY and "feishu" in sinks.REGISTRY
 
-def test_web_sink_records_snapshot():
+def test_web_sink_records_snapshot_per_project():
     sinks.web.reset()
-    sinks.fan_out(ProjectSnapshot(tasks=[{"id": "t1", "state": "RUNNING"}]))
-    assert sinks.web.latest()["tasks"][0]["id"] == "t1"
+    sinks.fan_out(ProjectSnapshot(tasks=[{"id": "t1", "state": "RUNNING"}], project_id="p1"))
+    assert sinks.web.latest("p1")["tasks"][0]["id"] == "t1"
+    assert sinks.web.latest("other")["tasks"] == []   # scoped per project
+
+def test_web_sink_emits_to_project_subscriber():
+    sinks.web.reset()
+    q = sinks.web.subscribe("p1")
+    sinks.fan_out(ProjectSnapshot(tasks=[{"id": "t1", "state": "RUNNING"}], project_id="p1"))
+    assert q.get_nowait()["id"] == "t1"
 
 def test_feishu_sink_called(monkeypatch):
     called = {}

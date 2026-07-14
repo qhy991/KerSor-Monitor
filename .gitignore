@@ -13,3 +13,6 @@ config/local-monitor.yaml
 # superpowers sdd scratch (task briefs, reports, ledger)
 .superpowers/
 flotilla.egg-info/
+flotilla.db-shm
+flotilla.db-wal
+flotilla-feishu-cache.json

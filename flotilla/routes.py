@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from fastapi import APIRouter, HTTPException
 from . import config, models, state, store
 
@@ -7,8 +8,17 @@ router = APIRouter()
 def _store() -> store.Store:
     return store.Store(config.SETTINGS.db_path)
 
+# Ids flow into ssh/tmux command strings (workspace = remote_root/ws_<id>), so
+# reject anything with shell metacharacters at the API boundary.
+_SAFE_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+
+def _check_id(value: str | None, label: str) -> None:
+    if not value or not _SAFE_ID.match(value):
+        raise HTTPException(400, f"invalid {label}: must match [A-Za-z0-9._-]+ (got {value!r})")
+
 @router.post("/projects", status_code=201)
 def create_project(p: models.Project):
+    _check_id(p.id, "project id")
     _store().create_project(p)
     return {"id": p.id}
 
@@ -19,10 +29,14 @@ def list_projects():
 @router.post("/projects/{pid}/tasks", status_code=201)
 def create_tasks(pid: str, tasks: list[models.Task]):
     # project_id is assigned from the URL path; the typed body validates the rest of the fields.
+    _check_id(pid, "project id")
     s = _store()
     if s.get_project(pid) is None:
         raise HTTPException(404, "project not found")
     for t in tasks:
+        _check_id(t.id, "task id")
+        if t.target_host:
+            _check_id(t.target_host, "target_host")
         t.project_id = pid
         t.state = state.transition(t.state, "QUEUED") if t.state == "PLANNED" else t.state
         s.create_task(t)
@@ -33,6 +47,29 @@ def get_task(tid: str):
     t = _store().get_task(tid)
     if t is None: raise HTTPException(404, "task not found")
     return t
+
+@router.get("/tasks/{tid}/history")
+def task_history(tid: str, limit: int = 200):
+    """Recorded status-event trajectory for a task (oldest->newest): each point
+    carries whatever the task reported (state + any optional metrics). Generic —
+    a task with no speedup simply has no speedup in its points."""
+    s = _store()
+    if s.get_task(tid) is None:
+        raise HTTPException(404, "task not found")
+    points = []
+    for e in s.status_events(tid, limit):
+        p = e.payload or {}
+        points.append({
+            "ts": p.get("timestamp") or e.ts,
+            "state": p.get("status_state"),
+            "speedup": p.get("speedup"),
+            "rounds": p.get("rounds"),
+            "candidates": p.get("candidates"),
+            "last_tool": p.get("last_tool"),
+            "last_activity": p.get("last_activity"),
+            "tokens": p.get("tokens"),
+        })
+    return {"task_id": tid, "points": points}
 
 @router.get("/projects/{pid}/tasks")
 def list_tasks(pid: str):
@@ -61,8 +98,8 @@ def list_hosts():
     return _store().list_hosts()
 
 @router.get("/summary")
-def summary():
-    counts = _store().task_counts()
+def summary(project: str | None = None):
+    counts = _store().task_counts(project)
     total = sum(counts.values())
     return {"total": total,
             "running": counts.get("RUNNING", 0),
@@ -104,16 +141,21 @@ def worker_ping(body: dict):
               **proj_feishu,
               **rec}
              for t2 in s.list_tasks(pid)]
-    sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
+    sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks, project_id=pid))
     # terminal check (worker reports promoted/stuck/abandoned)
     from .observer import _map_terminal
     terminal = _map_terminal(state, False)
     if terminal and t.state == "RUNNING":
-        s.set_task_state(task_id, terminal)
+        # Full retirement (releases the resource lock + drops the handle), not just
+        # a state flip — otherwise a heartbeat-reported completion would leak the lock.
+        from . import actuator
+        actuator.retire(s, task_id, s.active_worker_id(task_id), terminal)
     return {"ok": True}
 
 @router.post("/hosts", status_code=201)
 def create_host(h: models.Host):
+    _check_id(h.id, "host id")
+    _check_id(h.ssh_alias, "ssh_alias")
     s = _store()
     if s.get_host(h.id) is not None:
         raise HTTPException(409, f"host {h.id} already exists")
@@ -185,18 +227,19 @@ from fastapi.responses import StreamingResponse
 import json as _json
 from . import sinks as _sinks
 
-@router.get("/tasks/{tid}/events")
-def events(tid: str):
+@router.get("/projects/{pid}/events")
+def project_events(pid: str):
+    """One SSE stream per project (not per task), so a project with many tasks
+    doesn't blow past the browser's ~6-connections-per-origin cap. Each message is
+    a single task's latest snapshot; the client merges by task id."""
     def gen():
-        q = _sinks.web.subscribe(tid)
+        q = _sinks.web.subscribe(pid)
         try:
-            # seed with current snapshot
-            for t in _sinks.web.latest().get("tasks", []):
-                if t.get("id") == tid:
-                    yield f"data: {_json.dumps(t)}\n\n"
+            for t in _sinks.web.latest(pid).get("tasks", []):
+                yield f"data: {_json.dumps(t)}\n\n"
             while True:
                 payload = q.get()
                 yield f"data: {_json.dumps(payload)}\n\n"
         finally:
-            _sinks.web.unsubscribe(tid, q)
+            _sinks.web.unsubscribe(pid, q)
     return StreamingResponse(gen(), media_type="text/event-stream")

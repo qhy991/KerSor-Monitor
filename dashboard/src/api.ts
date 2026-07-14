@@ -1,5 +1,10 @@
-import type { Task, Host, Project, Summary, Template } from './types';
+import type { Task, Host, Project, Summary, Template, TaskPoint } from './types';
 const base = '';
+
+export async function getTaskHistory(tid: string): Promise<{ task_id: string; points: TaskPoint[] }> {
+  const r = await fetch(`${base}/tasks/${tid}/history`);
+  return r.json();
+}
 
 export async function listTasks(pid: string): Promise<Task[]> {
   const r = await fetch(`${base}/projects/${pid}/tasks`);
@@ -86,8 +91,9 @@ export async function actuate(tid: string, action: string, payload: object): Pro
   });
 }
 
-export function subscribe(tid: string, onEvt: (t: Task) => void): EventSource {
-  const es = new EventSource(`${base}/tasks/${tid}/events`);
+export function subscribeProject(pid: string, onEvt: (t: Task) => void): EventSource {
+  // One SSE stream per project — each message is a single task's latest snapshot.
+  const es = new EventSource(`${base}/projects/${pid}/events`);
   es.onmessage = (e) => onEvt(JSON.parse(e.data));
   return es;
 }
@@ -108,8 +114,9 @@ export async function deleteTemplate(id: string): Promise<void> {
 }
 
 // --- hosts (accessible hardware) ---
-export async function getSummary(): Promise<Summary> {
-  const r = await fetch(`${base}/summary`);
+export async function getSummary(project?: string): Promise<Summary> {
+  const q = project ? `?project=${encodeURIComponent(project)}` : '';
+  const r = await fetch(`${base}/summary${q}`);
   return r.json();
 }
 export async function getHosts(): Promise<Host[]> {
