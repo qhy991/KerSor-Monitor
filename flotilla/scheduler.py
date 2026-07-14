@@ -72,8 +72,16 @@ def tick(store, workspaces_root: Path | None = None) -> int:
                 store.set_task_state(task.id, "RUNNING")
                 _observe(store, wid, handle)
                 started += 1
-            except Exception:
-                pass  # dispatch failed; task stays QUEUED for next tick
+            except Exception as e:
+                # Dispatch failed; task stays QUEUED for next tick. Release the lock
+                # acquired in Phase 1 so the slot isn't leaked (and the retry doesn't
+                # acquire a second one).
+                print(f"[scheduler] dispatch failed for {task.id}: {e}", flush=True)
+                if lock is not None:
+                    try:
+                        _res.get(task.resource_req.get("kind")).release(lock)
+                    except Exception:
+                        pass
     return started
 
 def loop(store, interval: float = 5.0):

@@ -87,7 +87,7 @@ def observe_and_record(store: Store, worker_id: str, handle: WorkerHandle) -> di
               **proj_feishu,
               **rec}
              for t in store.list_tasks(pid)]
-    sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks))
+    sinks.fan_out(sinks.ProjectSnapshot(tasks=tasks, project_id=pid))
     return rec
 
 
@@ -125,16 +125,23 @@ def _session_activity(cwd: str, uuid: str, n: int = 20) -> dict | None:
     return {"last_activity": last_text, "last_tool": last_tool, "tokens": tokens}
 
 
-def _map_terminal(status_state: str | None, exited: bool) -> str | None:
+def _map_terminal(status_state: str | None, exited: bool, pane_tail: str = "") -> str | None:
     """Map worker status.json state + exit signal to a task state (or None=still running)."""
-    if status_state in ("promoted", "complete"):
+    if status_state in ("promoted", "complete", "archived"):
         return "DONE"
     if status_state in ("stuck", "stalled"):
         return "STUCK"
     if status_state == "abandoned":
         return "FAILED"
     if exited:
-        return "DONE"  # pane shows "Worker exited" and no worse signal
+        # Pane shows "Worker exited" but status.json never reached a success/terminal
+        # state (checked above). An unexpected exit is a failure, not a completion —
+        # a legit finish sets promoted/complete first and is caught above.
+        return "FAILED"
+    # Detect finished-but-no-terminal-state: the optimize loop completed but didn't
+    # write promoted/complete to status.json. Claude shows these end-of-session markers.
+    if pane_tail and any(s in pane_tail for s in ("clear to save", "100% context used", "Final session result")):
+        return "DONE"
     return None
 
 
@@ -147,17 +154,16 @@ def observe_running(store: Store) -> int:
     for task_id, (worker_id, handle) in list(actuator._HANDLES.items()):
         try:
             rec = observe_and_record(store, worker_id, handle)
-            terminal = _map_terminal(rec.get("status_state"), rec.get("exited", False))
+            terminal = _map_terminal(rec.get("status_state"), rec.get("exited", False), rec.get("pane_tail", ""))
             if terminal:
-                store.set_task_state(task_id, terminal)
-                store.end_worker(worker_id)
-                actuator.unregister(task_id)
-                # record the terminal event
+                # retire() releases the resource lock, marks the task terminal,
+                # closes the worker row, and unregisters the handle.
+                actuator.retire(store, task_id, worker_id, terminal)
                 store.append_event(models.Event(task_id=task_id, type="terminal", payload={"state": terminal}))
             else:
                 still_running += 1
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[observer] error on {task_id}: {e}", flush=True)
     return still_running
 
 

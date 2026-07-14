@@ -59,10 +59,11 @@ class ClaudeCodeTmuxRuntime:
         # KerSor round). Falls back to the default claude command below.
         boot_command = boot_command or meta.get("boot_command")
         cmd = boot_command or f"claude --model {model}{effort_flag} --permission-mode auto 'Read runs/combined_prompt.md and begin.'"
-        # Worker-push heartbeat: if FLOTILLA_API_URL is set, the worker pushes its
-        # status.json to the api every 60s (event-driven, no SSH polling needed).
+        # Worker-push heartbeat: only for LOCAL workers (the API URL is localhost on
+        # the api host — remote workers can't reach it via localhost). Remote workers
+        # are tracked by the observer's SSH polling instead.
         api_url = SETTINGS.api_base_url
-        if api_url:
+        if api_url and not host:
             heartbeat_setup = (
                 f'API_URL="{api_url}"\n'
                 f'( while true; do sleep 60; '
