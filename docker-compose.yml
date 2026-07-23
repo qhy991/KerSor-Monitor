@@ -1,13 +1,17 @@
-version: "3.9"
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "8000:8000"
+      # Safe default for a control plane that can start and steer remote workers.
+      # Override explicitly behind an authenticated reverse proxy for LAN access.
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/data          # persists flotilla.db + workspaces/
     environment:
       - FLOTILLA_START_SCHEDULER=1   # run the patrol loop so seeded tasks start
+      - FLOTILLA_OBSERVER_INTERVAL=2 # responsive local demo completion updates
+      - FLOTILLA_ALLOW_TASK_BOOT_COMMAND=0
+      - FLOTILLA_ALLOW_SHELL_RUNTIME=1 # required only for the bundled shell demo
     restart: unless-stopped

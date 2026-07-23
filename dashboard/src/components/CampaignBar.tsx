@@ -1,8 +1,19 @@
-import type { Task } from '../types';
+import type { Task, TaskState } from '../types';
 
 // Per-project roll-up computed live from the task map (no backend aggregate call).
 // State counts are generic; geomean speedup shows only if some task reports one.
-const STATES = ['QUEUED', 'RUNNING', 'DONE', 'FAILED', 'STUCK', 'PAUSED'] as const;
+const STATES: readonly TaskState[] = [
+  'PLANNED',
+  'QUEUED',
+  'DISPATCHING',
+  'RUNNING',
+  'PAUSED',
+  'STUCK',
+  'DONE',
+  'FAILED',
+  'CANCELLED',
+  'LOST',
+];
 
 export function CampaignBar({ tasks }: { tasks: Task[] }) {
   const total = tasks.length;
@@ -16,7 +27,7 @@ export function CampaignBar({ tasks }: { tasks: Task[] }) {
     ? Math.exp(speeds.reduce((a, v) => a + Math.log(v), 0) / speeds.length)
     : null;
 
-  const finished = (by.DONE || 0) + (by.FAILED || 0);
+  const finished = (by.DONE || 0) + (by.FAILED || 0) + (by.CANCELLED || 0);
   const pct = total ? Math.round((finished / total) * 100) : 0;
 
   if (total === 0) return null;

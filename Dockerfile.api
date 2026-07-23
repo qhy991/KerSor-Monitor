@@ -1,5 +1,5 @@
 # --- stage 1: build the React dashboard -------------------------------------
-FROM node:20-slim AS dashboard
+FROM node:22-slim AS dashboard
 WORKDIR /dash
 COPY dashboard/package.json dashboard/package-lock.json ./
 RUN npm ci
@@ -9,17 +9,24 @@ RUN npm run build
 # --- stage 2: the FastAPI api (+ serves the built dashboard) ----------------
 FROM python:3.12-slim
 WORKDIR /app
-# tmux is required by the ClaudeCodeTmuxRuntime adapter (GPU/kernel workers).
-RUN apt-get update && apt-get install -y --no-install-recommends tmux \
+COPY --from=ghcr.io/astral-sh/uv:0.11.28 /uv /uvx /bin/
+# Runtime capabilities used by remote workers and local heartbeat scripts.
+# Claude Code and lark-cli remain optional deployment-specific tools and are
+# checked at runtime rather than silently assumed to exist.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl openssh-client tmux \
     && rm -rf /var/lib/apt/lists/*
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 COPY flotilla ./flotilla
 # Built dashboard from stage 1 — app.create_app mounts it at "/" (guarded on
 # dist/ existing) so a single container serves both the API and the dashboard.
 COPY --from=dashboard /dash/dist ./dashboard/dist
-RUN pip install --no-cache-dir . uvicorn[standard]
+RUN uv sync --locked --no-dev
 ENV FLOTILLA_DB=/data/flotilla.db \
     FLOTILLA_WORKSPACES=/data/workspaces \
-    FLOTILLA_START_SCHEDULER=1
+    FLOTILLA_START_SCHEDULER=1 \
+    PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"
 CMD ["uvicorn", "flotilla.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

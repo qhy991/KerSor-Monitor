@@ -1,25 +1,57 @@
 from __future__ import annotations
-import json, os, subprocess, time
+
+import hashlib
+import json
+import os
+import subprocess
+import tempfile
+import threading
+import time
 from collections import defaultdict
+
 from .base import ProjectSnapshot
 
 # Flotilla state → Bitable Status option.
 _FEISHU_STATUS_MAP = {
-    "running": "running", "promoted": "promoted", "complete": "promoted", "done": "promoted",
-    "stuck": "pending", "stalled": "pending", "failed": "crashed", "abandoned": "abandoned",
-    "paused": "pending", "queued": "pending", "planned": "pending",
+    "running": "running",
+    "promoted": "promoted",
+    "complete": "promoted",
+    "done": "promoted",
+    "stuck": "pending",
+    "stalled": "pending",
+    "failed": "crashed",
+    "abandoned": "abandoned",
+    "paused": "pending",
+    "queued": "pending",
+    "planned": "pending",
+    "dispatching": "pending",
+    "cancelled": "abandoned",
+    "lost": "crashed",
 }
+
+
 def _feishu_status(s: str) -> str:
     return _FEISHU_STATUS_MAP.get((s or "pending").lower(), "pending")
 
-# Bitable columns we write (subset of the table's fields — names must match exactly).
-ROW_FIELDS = ["Task ID", "Name", "Status", "Round", "Speedup", "Best Score",
-              "Group", "Bottleneck", "Worker"]
 
-# Throttle: the observer fans out per worker per tick, which would otherwise spam
-# the Bitable API. Sync each (base, table) at most every N seconds.
+# Bitable columns we write (subset of the table's fields — names must match exactly).
+ROW_FIELDS = [
+    "Task ID",
+    "Name",
+    "Status",
+    "Round",
+    "Speedup",
+    "Best Score",
+    "Group",
+    "Bottleneck",
+    "Worker",
+]
+
+# Throttle each task independently. A table-wide throttle would permanently starve
+# all but the first task now that sink updates are intentionally task-scoped.
 _SYNC_INTERVAL = 60.0
-_LAST_SYNC: dict[tuple[str, str], float] = {}
+_LAST_SYNC: dict[tuple[str, str, str], float] = {}
+_SYNC_LOCK = threading.Lock()
 
 
 def _cache_path() -> str:
@@ -36,34 +68,40 @@ def _load_cache() -> dict[str, str]:
 
 
 def _save_cache(c: dict[str, str]) -> None:
+    temp_path = ""
     try:
-        with open(_cache_path(), "w") as f:
-            json.dump(c, f)
-    except Exception:
-        pass
+        destination = _cache_path()
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            dir=os.path.dirname(destination),
+            prefix=".flotilla-feishu-",
+            delete=False,
+        ) as file:
+            temp_path = file.name
+            json.dump(c, file)
+        os.replace(temp_path, destination)
+    except OSError:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
-def _status_json(t: dict) -> dict:
-    """The worker's actual status.json (ground truth) via SSH. The fan_out snapshot
-    merges ONE observed worker's rec into all rows, and DB events are stale for tasks
-    that completed before the speedup-propagation fix — so read the file directly."""
-    host = t.get("target_host")
-    ws = t.get("workspace_path")
-    if not host or not ws:
-        return {}
-    try:
-        r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", "-x",
-                            host, f"cat {ws}/status.json 2>/dev/null"],
-                           capture_output=True, text=True, timeout=15, check=False)
-        return json.loads(r.stdout) if r.stdout.strip() else {}
-    except Exception:
-        return {}
+def _record_cache_key(base: str, table: str, task_id: str) -> str:
+    """Scope record ids without persisting the Feishu base token in plaintext."""
+    return hashlib.sha256(f"{base}\0{table}\0{task_id}".encode()).hexdigest()
 
 
 class FeishuSink:
     name = "feishu"
+
     def __init__(self):
-        self._rid = _load_cache()  # {task_id: feishu record_id} → update, not duplicate
+        # {sha256(base, table, task_id): record_id}; scoping prevents reusing a
+        # record id when a project changes its target Bitable.
+        self._rid = _load_cache()
+        self._lock = threading.Lock()
 
     def render(self, snapshot: ProjectSnapshot) -> None:
         env_base = os.environ.get("FLOTILLA_FEISHU_BASE")
@@ -80,30 +118,71 @@ class FeishuSink:
                 groups[(base, table)].append(t)
         now = time.time()
         for (base, table), tasks in groups.items():
-            if now - _LAST_SYNC.get((base, table), 0.0) < _SYNC_INTERVAL:
-                continue  # throttled — skip this fan-out
-            _LAST_SYNC[(base, table)] = now
             for t in tasks:
                 tid = t.get("id") or ""
                 if not tid:
                     continue
-                rec = _status_json(t)
+                sync_key = (base, table, tid)
+                with _SYNC_LOCK:
+                    if now - _LAST_SYNC.get(sync_key, 0.0) < _SYNC_INTERVAL:
+                        continue
+                    _LAST_SYNC[sync_key] = now
+                rec = {
+                    "state": t.get("status_state") or t.get("state"),
+                    "rounds": t.get("rounds"),
+                    "speedup": t.get("speedup"),
+                    "group": t.get("group"),
+                    "bottleneck": t.get("bottleneck"),
+                }
                 row = {k: v for k, v in self._row(t, rec).items() if k in ROW_FIELDS}
-                args = ["lark-cli", "--as", "user", "base", "+record-upsert",
-                        "--base-token", base, "--table-id", table,
-                        "--json", json.dumps(row, ensure_ascii=False)]
-                rid = self._rid.get(tid)
+                args = [
+                    "lark-cli",
+                    "--as",
+                    "user",
+                    "base",
+                    "+record-upsert",
+                    "--base-token",
+                    base,
+                    "--table-id",
+                    table,
+                    "--json",
+                    json.dumps(row, ensure_ascii=False),
+                ]
+                cache_key = _record_cache_key(base, table, tid)
+                with self._lock:
+                    rid = self._rid.get(cache_key)
                 if rid:
                     args += ["--record-id", rid]  # update existing row
-                r = subprocess.run(args, capture_output=True, text=True, check=False)
                 try:
-                    rec_resp = (json.loads(r.stdout).get("data", {}) or {}).get("record", {}) or {}
+                    result = subprocess.run(
+                        args,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    print(f"[feishu] sync failed for {tid}: {exc}", flush=True)
+                    continue
+                if result.returncode != 0:
+                    detail = (result.stderr or result.stdout or "no output").strip()[-300:]
+                    print(
+                        f"[feishu] sync failed for {tid} with rc={result.returncode}: {detail}",
+                        flush=True,
+                    )
+                    continue
+                try:
+                    rec_resp = (json.loads(result.stdout).get("data", {}) or {}).get(
+                        "record", {}
+                    ) or {}
                     rids = rec_resp.get("record_id_list") or []
-                    if rids and rids[0] and self._rid.get(tid) != rids[0]:
-                        self._rid[tid] = rids[0]
-                        _save_cache(self._rid)
-                except Exception:
-                    pass
+                    if rids and rids[0]:
+                        with self._lock:
+                            if self._rid.get(cache_key) != rids[0]:
+                                self._rid[cache_key] = rids[0]
+                                _save_cache(self._rid)
+                except (AttributeError, json.JSONDecodeError, TypeError):
+                    print(f"[feishu] invalid response for {tid}", flush=True)
 
     def _row(self, t: dict, rec: dict) -> dict:
         host = t.get("target_host") or "local"
@@ -114,7 +193,11 @@ class FeishuSink:
         tid = t.get("id") or ""
         group = rec.get("group") or t.get("group")
         if not group:
-            group = "Quant" if tid.startswith("q-") else ("L2" if tid.startswith("l2-") else "FlashInfer")
+            group = (
+                "Quant"
+                if tid.startswith("q-")
+                else ("L2" if tid.startswith("l2-") else "FlashInfer")
+            )
         sp = rec.get("speedup")
         if not isinstance(sp, (int, float)):
             sp = 0

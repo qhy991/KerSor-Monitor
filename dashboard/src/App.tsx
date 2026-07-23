@@ -61,7 +61,7 @@ export default function App() {
       <HardwarePanel onChange={loadHosts} />
       <NewTaskForm pid={pid} hosts={hosts} onSubmitted={() => { setReloadKey((k) => k + 1); loadProjects(); }} />
       {/* Per-project campaign roll-up + progress lives in TaskGrid (computed live from the task map). */}
-      <TaskGrid pid={pid} reloadKey={reloadKey} />
+      <TaskGrid key={`${pid}:${reloadKey}`} pid={pid} reloadKey={reloadKey} />
     </div>
   );
 }

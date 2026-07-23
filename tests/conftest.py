@@ -1,7 +1,6 @@
 from __future__ import annotations
-import os
-import tempfile
 import pytest
+
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
@@ -9,7 +8,9 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setenv("FLOTILLA_DB", str(db))
     monkeypatch.setenv("FLOTILLA_WORKSPACES", str(tmp_path / "ws"))
     # reimport settings so env takes effect
-    import importlib, flotilla.config
+    import importlib
+    import flotilla.config
+
     importlib.reload(flotilla.config)
     return str(db)
 
@@ -20,6 +21,7 @@ def _isolate_actuator_registry():
     # Clear it around every test so scheduler registrations from one test cannot
     # leak into another (makes test order irrelevant).
     from flotilla import actuator
+
     actuator._HANDLES.clear()
     yield
     actuator._HANDLES.clear()

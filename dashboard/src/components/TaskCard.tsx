@@ -35,8 +35,21 @@ export function TaskCard({
   const hasMetrics = hasSpeedup || (t.rounds ?? 0) > 0 || (t.candidates ?? 0) > 0;
 
   const ageMs = typeof lastSeen === 'number' ? now - lastSeen : null;
-  const stale = ageMs !== null && (t.state === 'RUNNING' || t.state === 'STUCK') && ageMs > STALE_MS;
-  const activity = t.last_activity || (t.state === 'DONE' ? 'finished' : t.state === 'FAILED' ? 'failed' : '…');
+  const stale =
+    ageMs !== null &&
+    (t.state === 'DISPATCHING' || t.state === 'RUNNING' || t.state === 'STUCK') &&
+    ageMs > STALE_MS;
+  const activity =
+    t.last_activity ||
+    (t.state === 'DONE'
+      ? 'finished'
+      : t.state === 'FAILED'
+        ? 'failed'
+        : t.state === 'CANCELLED'
+          ? 'cancelled'
+          : t.state === 'LOST'
+            ? 'worker lost'
+            : '…');
 
   return (
     <div className={'card ' + stateClass(t.state)}>

@@ -43,9 +43,14 @@ export function HardwarePanel({ onChange }: { onChange: () => void }) {
   }
 
   async function remove(hid: string) {
-    await deleteHost(hid);
-    await load();
-    onChange();
+    setErr(null);
+    try {
+      await deleteHost(hid);
+      await load();
+      onChange();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : 'remove failed');
+    }
   }
 
   return (
